@@ -31,3 +31,43 @@ Reproduced a size-settings UX regression with a failing Node test: editing the v
 ## Version 1.3.2
 
 Removed mandatory report/source/import/encryption/history byte ceilings and made the optional output cap default to 0 (unlimited). A transactional one-time migration disables previous saved caps; subsequent user-selected caps persist. Settings and the Project label show Unlimited, with an explicit Use unlimited output action. Regression tests cover generation that first fails under an opt-in cap then succeeds on the same open folder with unlimited, prompt/encryption/parse round trips, migration from a previous 64 MiB budget, preserving later opt-in caps above 128 MiB, and UI forwarding of 0. Twelve UI tests, Go tests and go vet pass; Windows production build succeeds. Native dialogs and large-memory stress tests were not completed. The implementation remains memory-based; physical RAM/disk and crypto/platform resource constraints still apply. The existing marketing-page gate remains unpassed.
+
+## Workflow grouping and action hierarchy
+
+Reorganized the existing desktop UI into grouped text-tab navigation: Workspace, Restore & history, and Preferences. Primary workflow actions use the accent; secondary actions use neutral controls; selection, key, and refresh utilities use quiet text actions. Import separates report input, review, and destinations. History separates the selected version, whole-version restore, an expandable single-file restore, and recovery. Optional report instructions/encryption share a disclosure above export controls. Updated stale folder-history guidance to match current behavior.
+
+Visually inspected the actual initial workspace rendered at 1200x820, 760x580, and 390x844 (full-page captures are taller when scrolling is needed). Inspected Import and History interactively in local Chrome using computer use. The browser preview has no native Go bridge; its history fetch reports that limitation, so it does not validate native dialogs or filesystem writes. All original control IDs are retained. Seventeen Node UI tests pass, including section titles, panel visibility, and arrow-key navigation in visual order; Go tests, vet, and Windows production compilation pass. No fonts, UI dependencies, marketing visuals, or remote services were added. Native dialog workflows were not re-exercised. The marketing design gate remains a separate limitation for this desktop layout; no gate pass is claimed.
+
+Design gate result: `GATE: OPEN 29 (rounds used up)`. No waivers were created. The run cleared the actual 320px overflow, preview field label, and heading-scale findings. Remaining findings concern the checker’s marketing-page layout requirements, which are retained here as open findings rather than converted into a marketing page:
+
+1. hero-fill: workspace appears below a compact title rather than a full-screen hero.
+2. flush: adjacent source/report panes share a screen.
+3. nav: brand and grouped section tabs occupy separate rows.
+4. text-only: report editor has no marketing visual.
+5. cta: title area has no separate hero action.
+6. copy-headline: Create a report does not name a product category being sold.
+7. off-grid: desktop Workspace label is inset with its tab.
+8. moment-none: no promotional animation moment.
+9. hero-screen: grouped navigation is shorter than a screen.
+10. hero-screen: title and workspace share the first screen.
+11. section-height: status footer is shorter than a screen.
+12. section-height: workspace is shorter than a screen.
+13. section-air: title-to-workspace spacing is below the marketing spacing threshold.
+14. one-section: multiple desktop UI regions share a screen.
+15. one-section: main contains navigation directly.
+16. one-section: main contains the workspace div and status footer directly.
+17. one-heading: workspace has source and report headings.
+18. one-heading: source and page headings share a desktop screen.
+19. container-edges: header uses compact desktop margins.
+20. container-edges: navigation/title/workspace use compact desktop margins.
+21. container-edges: skip link is outside the marketing header shell.
+22. container-edges: output-limit metadata is right aligned.
+23. container-edges: headings align within their panes.
+24. container-edges: report pane header is wider than half the workspace.
+25. container-edges: editor/options/actions align to the report pane.
+26. no-visual: source pane has no marketing image at mobile size.
+27. off-grid: mobile Restore & history label is inset with its tabs.
+28. off-grid: mobile Preferences label is inset with its tabs.
+29. container: no marketing .wrap class.
+
+Eleven nonblocking warnings remain, including copy-headings, copy-buttons, copy-actions, off-grid, and section-gaps. Product vocabulary, compact controls, adjacent working panes, and empty editors were retained for this existing desktop utility. No separate performance run was completed. No assumed business facts, new brand names, photographs, form endpoints, or external asset slots were introduced. Final screenshot at 320px was visually inspected after correcting overflow. Final executable includes the corrected layout.

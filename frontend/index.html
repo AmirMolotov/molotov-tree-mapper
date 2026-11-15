@@ -11,304 +11,53 @@
     />
     <title>Molotov Tree Mapper</title>
     <link rel="stylesheet" href="style.css" />
+    <link rel="icon" type="image/svg+xml" href="icon.svg" />
   </head>
   <body>
-    <a class="skip" href="#workspace">Skip to workspace</a>
-    <header>
-      <div class="brand">
-        <span class="mark">M<span>↳</span></span>
-        <div>Molotov <strong>Tree Mapper</strong></div>
-      </div>
-      <span class="local"><i></i> Local files. Local processing.</span>
-    </header>
-    <main id="workspace">
-      <div class="intro">
-        <div>
-          <span class="eyebrow">Folder → context</span>
-          <h1>Your project, in one document.</h1>
-          <p>Select what matters. Export the tree and the files behind it.</p>
-        </div>
-        <button id="choose" class="primary">Open folder <span>↗</span></button>
-      </div>
-      <div class="tabs" role="tablist" aria-label="Workspace tabs">
-        <button
-          id="tab-project"
-          role="tab"
-          aria-selected="true"
-          aria-controls="project-panel"
-        >
-          Project
-        </button>
-        <button
-          id="tab-excludes"
-          role="tab"
-          aria-selected="false"
-          aria-controls="excludes-panel"
-        >
-          Excludes
-        </button>
-        <button
-          id="tab-restore"
-          role="tab"
-          aria-selected="false"
-          aria-controls="restore-panel"
-        >
-          Restore
-        </button>
-        <button
-          id="tab-types"
-          role="tab"
-          aria-selected="false"
-          aria-controls="types-panel"
-        >
-          File types
-        </button>
-        <button
-          id="tab-settings"
-          role="tab"
-          aria-selected="false"
-          aria-controls="settings-panel"
-        >
-          Settings
-        </button>
-        <button
-          id="tab-history"
-          role="tab"
-          aria-selected="false"
-          aria-controls="history-panel"
-        >
-          History
-        </button>
-      </div>
-      <div
-        id="project-panel"
-        role="tabpanel"
-        aria-labelledby="tab-project"
-        class="workspace"
-      >
-        <section class="explorer">
-          <div class="panel-head">
-            <h2>Source tree</h2>
-            <span id="count">No folder selected</span>
-          </div>
-          <div class="tools">
-            <button id="all" disabled>Include all</button
-            ><button id="none" disabled>Exclude all</button>
-          </div>
-          <div id="tree" class="tree">
-            <div class="empty">
-              <span class="folder-symbol">▱</span>
-              <h3>Drop a folder here</h3>
-              <p>
-                Or use Open folder to browse.<br />Your files stay on this
-                computer.
-              </p>
-            </div>
-          </div>
-          <div class="panel-foot">
-            Uncheck a folder to exclude its contents.
-          </div>
-        </section>
-        <section class="report">
-          <div class="panel-head">
-            <h2>Report preview</h2>
-            <span id="limit-label">Unlimited output</span
-            ><span id="size">Markdown / UTF-8</span>
-          </div>
-          <div class="preview-wrap">
-            <textarea
-              id="preview"
-              aria-label="Report preview"
-              placeholder="Your directory tree and file contents will appear here."
-            ></textarea>
-          </div>
-          <label class="prompt-option"
-            ><input type="checkbox" id="include-prompt" /> Add
-            project-conventions prompt for an LLM</label
-          >
-          <details class="export-options">
-            <summary>Encryption options</summary>
-            <label
-              ><input type="checkbox" id="encrypt-output" /> Encrypt
-              copied/saved report</label
-            >
-            <label for="export-key"
-              >Encryption key (32-byte base64, not a password)</label
-            >
-            <input
-              id="export-key"
-              type="password"
-              autocomplete="off"
-              spellcheck="false"
-              placeholder="Generate or paste a key"
-            />
-            <div class="key-actions">
-              <button id="new-key">Generate key</button
-              ><button id="open-key">Import key</button
-              ><button id="save-key">Export key</button>
-            </div>
-            <p>
-              Keep the key separately. Without it, an encrypted report cannot be
-              recovered. You can edit the plaintext preview before exporting.
-            </p>
-          </details>
-          <div class="actions">
-            <button id="generate" class="primary" disabled>
-              Generate report <span>→</span>
-            </button>
-            <div>
-              <button id="copy" disabled>Copy report</button
-              ><button id="save" disabled>Save report</button>
-            </div>
-          </div>
-        </section>
-      </div>
-      <section
-        id="excludes-panel"
-        role="tabpanel"
-        aria-labelledby="tab-excludes"
-        hidden
-      >
-        <h2>Exclude file and folder names</h2>
-        <p>
-          Rules apply to every project and persist on this computer. Matching
-          folders and their contents are never scanned.
-        </p>
-        <label for="patterns">One pattern per line</label>
-        <textarea
-          id="patterns"
-          spellcheck="false"
-          placeholder="node_modules&#10;*.log&#10;.env.*"
-        ></textarea>
-        <p>
-          Use * for any characters, ? for one character, and [abc] for a
-          character set. Match names at any depth, case-sensitive. Paths and
-          negation rules are not supported.
-        </p>
-        <button id="save-excludes" class="primary">Save excludes</button>
-      </section>
-      <section
-        id="restore-panel"
-        role="tabpanel"
-        aria-labelledby="tab-restore"
-        hidden
-      >
-        <h2>Restore a project from a report</h2>
-        <p>
-          Paste a Molotov report or open a saved export. Encrypted reports
-          require the matching key. Files are created inside a new folder;
-          existing projects are never overwritten.
-        </p>
-        <button id="open-report">Open report</button>
-        <label for="restore-input">Report text</label
-        ><textarea
-          id="restore-input"
-          spellcheck="false"
-          placeholder="Paste a tree-first Molotov report with file contents, or an encrypted report here"
-        ></textarea>
-        <label for="restore-key"
-          >Decryption key (only for encrypted reports)</label
-        ><input
-          type="password"
-          id="restore-key"
-          autocomplete="off"
-          spellcheck="false"
-        />
-        <div class="key-actions">
-          <button id="update-project">
-            Update existing project with history
-          </button>
-          <button id="open-restore-key">Import key</button
-          ><button id="decrypt-report">Decrypt for editing</button
-          ><button id="inspect-report">Validate report</button
-          ><button id="restore-report" class="primary">
-            Choose destination and restore
-          </button>
-        </div>
-        <pre id="restore-summary" role="status">
-Validate the report to see what will be created. Skipped/binary files cannot be recovered.</pre
-        >
-      </section>
-      <section
-        id="types-panel"
-        role="tabpanel"
-        aria-labelledby="tab-types"
-        hidden
-      >
-        <h2>Include files by type</h2>
-        <p>
-          Toggle a category or an individual extension. This scan reads names
-          only; folder contents stay lazy in the project tree. Saved Excludes
-          rules still apply.
-        </p>
-        <button id="scan-types">Scan file types</button>
-        <div id="type-list">Choose a folder, then scan its file types.</div>
-      </section>
-      <section
-        id="settings-panel"
-        role="tabpanel"
-        aria-labelledby="tab-settings"
-        hidden
-      >
-        <h2>Report settings</h2>
-        <label for="max-report"
-          >Optional maximum output size (MiB, 0 = unlimited)</label
-        >
-        <input id="max-report" type="number" min="0" step="1" value="0" />
-        <p>
-          Default: unlimited. Set 0 to disable the output-size limit, or enter a
-          positive number to opt into a cap. A chosen cap includes the complete
-          report and encrypted output overhead. Very large reports need
-          sufficient memory.
-        </p>
-        <button id="save-settings" class="primary">Save settings</button>
-        <button id="unlimited-output">Use unlimited output</button>
-      </section>
-      <section
-        id="history-panel"
-        role="tabpanel"
-        aria-labelledby="tab-history"
-        hidden
-      >
-        <h2>Restore history</h2>
-        <p>
-          History is stored as plaintext in .molotov-history.sqlite inside the
-          project and automatically excluded from exports. Each update and
-          revert saves the current managed files first. Untracked files are left
-          alone. Empty directories are not removed by reverts.
-        </p>
-        <div class="key-actions">
-          <button id="choose-history">Choose project</button
-          ><button id="refresh-history">Refresh history</button
-          ><button id="recover-history">Recover interrupted update</button>
-        </div>
-        <p id="history-root">No history project selected.</p>
-        <label for="history-version">Version</label
-        ><select id="history-version"></select>
-        <pre id="history-changes" role="status">
-Select a version to see added, modified, and removed files.</pre
-        >
-        <label for="history-file">Managed file</label
-        ><select id="history-file"></select>
-        <div class="key-actions">
-          <button id="revert-file">Revert selected file</button
-          ><button id="revert-version">
-            Revert managed files to this version
-          </button>
-        </div>
-        <pre id="history-status" role="status">
-Choose a restored project to browse its versions.</pre
-        >
-      </section>
-      <div id="loader" hidden role="status" aria-live="polite">
-        <span class="spinner"></span><span id="loading-text">Loading…</span>
-      </div>
-      <footer>
-        <span id="status" role="status" aria-live="polite"
-          >Ready when you are.</span
-        ><span>Review selected files before sharing a report.</span>
-      </footer>
-    </main>
-    <script src="app.js"></script>
-  </body>
-</html>
+<a class="skip" href="#workspace">Skip to workspace</a>
+<header><div class="brand"><img class="mark" src="icon.svg" width="32" height="32" alt=""><div>Molotov <strong>Tree Mapper</strong></div></div><span class="local"><i></i>Local files. Local processing.</span></header>
+<main id="workspace">
+<nav class="tabs" role="tablist" aria-label="Workspace sections">
+ <div class="nav-group" role="presentation"><span class="nav-label">Workspace</span><button id="tab-project" role="tab" aria-selected="false" aria-controls="project-panel">Create report</button></div>
+ <div class="nav-group" role="presentation"><span class="nav-label">Restore &amp; history</span><button id="tab-restore" role="tab" aria-selected="false" aria-controls="restore-panel">Import report</button><button id="tab-history" role="tab" aria-selected="false" aria-controls="history-panel">Version history</button></div>
+ <div class="nav-group" role="presentation"><span class="nav-label">Preferences</span><button id="tab-types" role="tab" aria-selected="false" aria-controls="types-panel">File types</button><button id="tab-excludes" role="tab" aria-selected="false" aria-controls="excludes-panel">Exclusion rules</button><button id="tab-settings" role="tab" aria-selected="false" aria-controls="settings-panel">Output limits</button></div></nav>
+<div class="intro"><div><h1 id="page-title">Create a report</h1><p id="page-description">Choose your source, select the files, then generate and export.</p></div></div>
+<div id="project-panel" role="tabpanel" aria-labelledby="tab-project" class="workspace">
+ <section class="explorer" aria-labelledby="source-title">
+  <div class="panel-head"><h2 id="source-title">Source files</h2><button id="choose">Open folder</button></div>
+  <div class="tools"><span id="count">No folder selected</span><div class="inline-actions"><button id="all" class="text-action" disabled>Include all</button><button id="none" class="text-action" disabled>Exclude all</button></div></div>
+  <div id="tree" class="tree"><div class="empty"><span class="folder-symbol" aria-hidden="true">/</span><h3>Start with a folder</h3><p>Drop it here or choose Open folder.<br>Your files stay on this computer.</p></div></div>
+  <div class="panel-foot">Uncheck a folder to exclude its contents.</div>
+ </section>
+ <section class="report" aria-labelledby="preview-title">
+  <div class="panel-head"><h2 id="preview-title"><label for="preview">Report preview</label></h2><span id="size">Markdown / UTF-8</span></div>
+  <div id="report-progress" role="status" aria-live="polite"></div><progress id="report-meter" hidden aria-label="Report generation progress"></progress>
+  <div class="preview-wrap"><textarea id="preview" aria-label="Report preview" placeholder="Generate a report to see your selected tree and file contents here." spellcheck="false"></textarea></div>
+  <details class="export-options"><summary>Report options <span id="limit-label">Unlimited output</span></summary>
+   <div class="option-body"><label class="check-option"><input type="checkbox" id="include-prompt">Include project-conventions instructions for an LLM</label>
+   <div class="option-divider"><label class="check-option"><input type="checkbox" id="encrypt-output">Encrypt copied and saved reports</label>
+   <label for="export-key">Encryption key</label><input id="export-key" type="password" autocomplete="off" spellcheck="false" placeholder="Generate or paste a 32-byte base64 key">
+   <div class="inline-actions"><button id="new-key" class="text-action">Generate key</button><button id="open-key" class="text-action">Import key</button><button id="save-key" class="text-action">Export key</button></div>
+   <p class="hint">Keep the key separately. It is required to decrypt the report.</p></div></div>
+  </details>
+  <div class="actions"><div><button id="generate" class="primary" disabled>Generate report</button><button id="cancel-report" hidden>Cancel report</button></div><div class="export-actions" role="group" aria-label="Export report"><span class="group-label">Export</span><button id="copy" disabled>Copy</button><button id="save" disabled>Save file</button></div></div>
+ </section>
+</div>
+<section id="restore-panel" class="section-panel" role="tabpanel" aria-labelledby="tab-restore" hidden>
+<div class="workflow-grid">
+ <div class="workflow-main">
+  <div class="section-head"><div><span class="step-label">01 / Report input</span><h2>Open or paste a report</h2></div><button id="open-report">Open file</button></div>
+  <label for="restore-input">Report text</label><textarea id="restore-input" spellcheck="false" placeholder="Paste a Molotov report or open an exported file"></textarea>
+  <details class="disclosure"><summary>Encrypted report</summary><div class="option-body"><label for="restore-key">Decryption key</label><input type="password" id="restore-key" autocomplete="off" spellcheck="false"><div class="inline-actions"><button id="open-restore-key" class="text-action">Import key</button><button id="decrypt-report" class="text-action">Decrypt for editing</button></div></div></details>
+ </div>
+ <aside class="workflow-side" aria-labelledby="review-title"><span class="step-label">02 / Review</span><h2 id="review-title">Check the report</h2><p>Validate the paths and contents before writing files.</p><button id="inspect-report">Validate report</button><pre id="restore-summary" role="status">No report validated yet. Skipped and binary files cannot be recovered.</pre>
+ <div class="section-divider"><span class="step-label">03 / Destination</span><h2>Create a new project</h2><p>Choose a destination. Files are restored inside a new folder.</p><button id="restore-report" class="primary">Restore to new folder</button></div>
+ <div class="section-divider"><h3>Update an existing project</h3><p>Apply the report to an existing folder and save its current state in history.</p><button id="update-project">Update with history</button></div>
+ </aside>
+</div></section><section id="history-panel" class="section-panel" role="tabpanel" aria-labelledby="tab-history" hidden>
+<div class="section-head"><div><h2>Project history</h2><p id="history-root">No history project selected.</p></div><div class="inline-actions"><button id="refresh-history" class="text-action">Refresh</button><button id="choose-history">Choose project</button></div></div>
+<div class="workflow-grid history-grid"><div class="workflow-main"><label for="history-version">Saved version</label><select id="history-version"></select><p class="hint">Choose a snapshot to inspect its files and changes.</p><pre id="history-changes" role="status">Select a version to see added, modified, and removed files.</pre></div>
+<aside class="workflow-side"><h2>Restore this version</h2><p>Restore managed files and folders to the selected snapshot. Your current state is saved first; untracked content is preserved.</p><button id="revert-version" class="primary">Revert to this version</button>
+<details class="disclosure"><summary>Revert just one file</summary><div class="option-body"><label for="history-file">Managed file</label><select id="history-file"></select><p class="hint">A file marked Absent will be removed.</p><button id="revert-file">Revert selected file</button></div></details>
+<div class="section-divider"><h3>History storage</h3><p>Saved as plaintext in .molotov-history.sqlite inside the project. Automatically excluded from reports.</p></div></aside></div>
+<div class="recovery-row"><div><h3>Interrupted update recovery</h3><pre id="history-status" role="status">Choose a restored project to browse its versions.</pre></div><button id="recover-history">Recover update</button></div></section><section id="types-panel" class="section-panel" role="tabpanel" aria-labelledby="tab-types" hidden><div class="section-head"><div><h2>Include files by type</h2><p>Choose categories or individual extensions for the current project.</p></div><button id="scan-types">Scan file types</button></div><p class="hint">This scan reads names only. Saved exclusion rules still apply.</p><div id="type-list">Open a source folder in Create report to scan its file types.</div></section><section id="excludes-panel" class="section-panel" role="tabpanel" aria-labelledby="tab-excludes" hidden><div class="settings-layout"><div><h2>Exclusion rules</h2><p>Skip matching file and folder names in every project. These rules are saved on this computer.</p><h3>Pattern reference</h3><dl class="pattern-help"><dt>*</dt><dd>Any characters</dd><dt>?</dt><dd>One character</dd><dt>[abc]</dt><dd>One listed character</dd></dl><p class="hint">Names match at any depth and are case-sensitive. Paths and negation are not supported.</p></div><div><label for="patterns">One name pattern per line</label><textarea id="patterns" spellcheck="false" placeholder="node_modules&#10;*.log&#10;.env.*"></textarea><div class="form-actions"><button id="save-excludes" class="primary">Save exclusion rules</button><span class="hint">Applies to all projects</span></div></div></div></section><section id="settings-panel" class="section-panel" role="tabpanel" aria-labelledby="tab-settings" hidden><div class="settings-layout"><div><h2>Output size</h2><p>Reports are unlimited by default. Add an optional cap to keep exports within a specific size.</p><p class="hint">The cap includes metadata, instructions, and encryption overhead. Large reports still need sufficient memory.</p></div><div><label for="max-report">Maximum output size in MiB</label><div class="inline-actions"><input id="max-report" type="number" min="0" step="1" value="0" aria-describedby="size-help"><button id="unlimited-output" class="text-action">Use unlimited</button></div><p id="size-help" class="hint">0 means unlimited. Changes apply automatically.</p><div class="form-actions"><button id="save-settings" class="primary">Save output limit</button></div></div></div></section><div id="loader" hidden role="status" aria-live="polite"><span class="spinner"></span><span id="loading-text">Loading...</span></div><footer><span id="status" role="status" aria-live="polite">Ready when you are.</span><span>Review files before sharing.</span></footer></main><script src="app.js"></script></body></html>

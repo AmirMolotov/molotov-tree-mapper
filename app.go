@@ -13,13 +13,16 @@ import (
 )
 
 type App struct {
-	ctx         context.Context
-	mu          sync.Mutex
-	root        string
-	tree        *Node
-	store       *RuleStore
-	storeErr    error
-	historyRoot string
+	progressMu   sync.Mutex
+	progress     ReportProgress
+	cancelReport context.CancelFunc
+	ctx          context.Context
+	mu           sync.Mutex
+	root         string
+	tree         *Node
+	store        *RuleStore
+	storeErr     error
+	historyRoot  string
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -95,7 +98,47 @@ func (a *App) LoadFolder(path string) (*Node, error) {
 	a.tree = t
 	return t, nil
 }
+
+type ReportProgress struct {
+	Phase       string `json:"phase"`
+	Processed   int    `json:"processed"`
+	Total       int    `json:"total"`
+	Included    int    `json:"included"`
+	Skipped     int    `json:"skipped"`
+	SourceBytes int    `json:"sourceBytes"`
+	ReadBytes   int    `json:"readBytes"`
+	OutputBytes int    `json:"outputBytes"`
+}
+
+func (a *App) GetReportProgress() ReportProgress {
+	a.progressMu.Lock()
+	defer a.progressMu.Unlock()
+	return a.progress
+}
+func (a *App) CancelReport() {
+	a.progressMu.Lock()
+	defer a.progressMu.Unlock()
+	if a.cancelReport != nil {
+		a.cancelReport()
+	}
+}
+func (a *App) setReportProgress(p ReportProgress) {
+	a.progressMu.Lock()
+	defer a.progressMu.Unlock()
+	a.progress = p
+}
 func (a *App) Generate(excluded, excludedTypes []string, includePrompt bool) (string, error) {
+	a.progressMu.Lock()
+	if a.cancelReport != nil {
+		a.progressMu.Unlock()
+		return "", fmt.Errorf("Report already running")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.cancelReport = cancel
+	a.progress = ReportProgress{Phase: "Scanning"}
+	a.progressMu.Unlock()
+	defer func() { cancel(); a.progressMu.Lock(); a.cancelReport = nil; a.progressMu.Unlock() }()
+
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.tree == nil {
@@ -105,7 +148,7 @@ func (a *App) Generate(excluded, excludedTypes []string, includePrompt bool) (st
 	if err != nil {
 		return "", err
 	}
-	tree, err := scanSelected(a.root, rules, excluded)
+	tree, err := scanSelectedContext(ctx, a.root, rules, excluded)
 	if err != nil {
 		return "", err
 	}
@@ -119,10 +162,13 @@ func (a *App) Generate(excluded, excludedTypes []string, includePrompt bool) (st
 	if includePrompt {
 		suffix = llmPromptStart + llmInstructions + llmPromptEnd
 	}
-	r, err := reportLimited(a.root, tree, excluded, reportBudget(limit, len(suffix)))
+	r, err := reportWithProgress(ctx, a.root, tree, excluded, reportBudget(limit, len(suffix)), a.setReportProgress)
 	if err != nil {
 		return "", err
 	}
+	p := a.GetReportProgress()
+	p.OutputBytes = len(r) + len(suffix)
+	a.setReportProgress(p)
 	return r + suffix, nil
 }
 func (a *App) NewKey() (string, error) { return newKey() }
@@ -295,6 +341,15 @@ func (a *App) checkOutputSize(text string) error {
 	}
 	return nil
 }
+
+// Wails uses fixed Yes/No buttons for Windows question dialogs.
+func confirmHistoryChange(ctx context.Context, title, message string, show func(context.Context, runtime.MessageDialogOptions) (string, error)) (bool, error) {
+	answer, err := show(ctx, runtime.MessageDialogOptions{
+		Type: runtime.QuestionDialog, Title: title, Message: message,
+		Buttons: []string{"Yes", "No"}, DefaultButton: "No", CancelButton: "No",
+	})
+	return err == nil && answer == "Yes", err
+}
 func (a *App) UpdateRestore(text, key string) (History, error) {
 	p, err := a.InspectReport(text, key)
 	if err != nil {
@@ -307,8 +362,8 @@ func (a *App) UpdateRestore(text, key string) (History, error) {
 	if filepath.Base(root) != p.Root {
 		return History{}, fmt.Errorf("Selected folder must be named %s", p.Root)
 	}
-	answer, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{Type: runtime.QuestionDialog, Title: "Apply versioned update", Message: fmt.Sprintf("Update %d files in %s? Current managed content will be saved in local history. Unmentioned files remain unchanged.", len(p.Contents), root), Buttons: []string{"Cancel", "Update"}, DefaultButton: "Cancel"})
-	if err != nil || answer != "Update" {
+	confirmed, err := confirmHistoryChange(a.ctx, "Apply versioned update", fmt.Sprintf("Update %d files in %s? Current managed content will be saved in local history. Unmentioned files remain unchanged.", len(p.Contents), root), runtime.MessageDialog)
+	if err != nil || !confirmed {
 		return History{}, err
 	}
 	a.mu.Lock()
@@ -319,18 +374,11 @@ func (a *App) UpdateRestore(text, key string) (History, error) {
 		changes[name] = &value
 	}
 	for _, dir := range p.Dirs {
-		if err = ensureParents(root, dir+"/placeholder", false); err != nil {
-			return History{}, err
-		}
+		present := ""
+		changes[dir+"/"] = &present
 	}
 	if _, err = versionedChange(root, "Restore update", changes, p.Files); err != nil {
 		return History{}, err
-	}
-	// Empty directories are created after file updates; files remain versioned if this step fails.
-	for _, dir := range p.Dirs {
-		if err = ensureParents(root, dir+"/placeholder", true); err != nil {
-			return History{}, fmt.Errorf("Files updated; directory creation failed: %w", err)
-		}
 	}
 	a.historyRoot = root
 	return loadHistory(root)
@@ -362,12 +410,15 @@ func (a *App) RevertHistory(id int64, file string) (History, error) {
 	if a.historyRoot == "" {
 		return History{}, fmt.Errorf("Choose a history project first")
 	}
-	message := "Revert all managed files to this version? Later added managed files may be removed; untracked files and directories stay untouched. Current managed content is saved as another version."
+	message := "Revert all managed files to this version? Later added managed files may be removed; Untracked content is preserved; tracked folders are removed only when empty. Current managed content is saved as another version."
 	if file != "" {
 		message = "Revert " + file + " to the selected version? Its current content is saved first. The file may be removed if it did not exist in that version."
 	}
-	answer, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{Type: runtime.QuestionDialog, Title: "Revert version", Message: message, Buttons: []string{"Cancel", "Revert"}, DefaultButton: "Cancel"})
-	if err != nil || answer != "Revert" {
+	confirmed, err := confirmHistoryChange(a.ctx, "Revert version", message, runtime.MessageDialog)
+	if err != nil {
+		return History{}, err
+	}
+	if !confirmed {
 		return loadHistory(a.historyRoot)
 	}
 	if _, err = revertVersion(a.historyRoot, id, file); err != nil {

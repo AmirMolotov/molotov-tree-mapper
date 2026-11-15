@@ -3,11 +3,14 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 const historyName = ".molotov-history.sqlite"
@@ -18,11 +21,13 @@ type FileChange struct {
 	Status string `json:"status"`
 }
 type Version struct {
-	Changes []FileChange `json:"changes"`
-	ID      int64        `json:"id"`
-	Label   string       `json:"label"`
-	Created string       `json:"created"`
-	Files   []string     `json:"files"`
+	Changes      []FileChange `json:"changes"`
+	ID           int64        `json:"id"`
+	Label        string       `json:"label"`
+	Created      string       `json:"created"`
+	Files        []string     `json:"files"`
+	PresentFiles int          `json:"presentFiles"`
+	Absent       []string     `json:"absent"`
 }
 type History struct {
 	Root     string    `json:"root"`
@@ -56,18 +61,55 @@ func readSnapshot(db *sql.DB, id int64) (snapshot, error) {
 		return nil, err
 	}
 	var s snapshot
-	if err = json.Unmarshal([]byte(data), &s); err != nil {
+	if s, err = decodeSnapshot(data); err != nil {
 		return nil, err
 	}
 	if len(s) > maxNodes {
 		return nil, fmt.Errorf("Too many history paths")
 	}
-	for name := range s {
-		if err = validManagedPath(name); err != nil {
+	for name, value := range s {
+		if strings.HasSuffix(name, "/") && value != nil && *value != "" {
+			return nil, fmt.Errorf("Invalid directory snapshot: %s", name)
+		}
+		if err = validManagedPath(strings.TrimSuffix(name, "/")); err != nil {
 			return nil, err
 		}
 	}
 	return s, nil
+}
+
+// A trailing slash identifies a directory; legacy file-only snapshots infer parents.
+func decodeSnapshot(data string) (snapshot, error) {
+	s := snapshot{}
+	if err := json.Unmarshal([]byte(data), &s); err != nil {
+		return nil, err
+	}
+	if s == nil {
+		s = snapshot{}
+	}
+	addSnapshotParents(s)
+	return s, nil
+}
+func addSnapshotParents(s snapshot) {
+	parents := snapshot{}
+	for name, value := range s {
+		for dir := path.Dir(strings.TrimSuffix(name, "/")); dir != "." && dir != "/"; dir = path.Dir(dir) {
+			key := dir + "/"
+			if _, explicit := s[key]; explicit {
+				continue
+			}
+			if _, exists := parents[key]; !exists || value != nil {
+				parents[key] = nil
+				if value != nil {
+					present := ""
+					parents[key] = &present
+				}
+			}
+		}
+	}
+	for dir, value := range parents {
+		s[dir] = value
+	}
 }
 func validManagedPath(name string) error {
 	if err := validRelative(name); err != nil {
@@ -87,6 +129,27 @@ func pendingIDs(db *sql.DB) (int64, int64, error) {
 	return before, after, err
 }
 func currentFile(root, name string) (*string, error) {
+	if strings.HasSuffix(name, "/") {
+		rel := strings.TrimSuffix(name, "/")
+		if err := validManagedPath(rel); err != nil {
+			return nil, err
+		}
+		if err := ensureParents(root, rel+"/placeholder", false); err != nil {
+			return nil, err
+		}
+		st, err := os.Lstat(filepath.Join(root, filepath.FromSlash(rel)))
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		if !st.IsDir() || st.Mode()&os.ModeSymlink != 0 {
+			return nil, fmt.Errorf("Unsafe history directory: %s", rel)
+		}
+		present := ""
+		return &present, nil
+	}
 	if err := validManagedPath(name); err != nil {
 		return nil, err
 	}
@@ -171,6 +234,16 @@ func applySnapshot(root string, desired, expected snapshot, order ...[]string) e
 		}
 	}
 	for _, name := range names {
+		if strings.HasSuffix(name, "/") && desired[name] != nil {
+			if err := ensureParents(root, name+"placeholder", true); err != nil {
+				return err
+			}
+		}
+	}
+	for _, name := range names {
+		if strings.HasSuffix(name, "/") {
+			continue
+		}
 		want := desired[name]
 		current, err := currentFile(root, name)
 		if err != nil {
@@ -217,6 +290,30 @@ func applySnapshot(root string, desired, expected snapshot, order ...[]string) e
 			return err
 		}
 	}
+	// Remove only tracked directories, deepest first, and never recurse into untracked content.
+	sort.Slice(names, func(i, j int) bool { return len(names[i]) > len(names[j]) })
+	for _, name := range names {
+		if !strings.HasSuffix(name, "/") || desired[name] != nil {
+			continue
+		}
+		current, err := currentFile(root, name)
+		if err != nil {
+			return err
+		}
+		if current == nil {
+			continue
+		}
+		full, err := checkedPath(root, strings.TrimSuffix(name, "/"))
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(full); err != nil && !os.IsNotExist(err) && !errors.Is(err, syscall.ENOTEMPTY) && !errors.Is(err, syscall.EEXIST) {
+			// Windows reports a nonempty directory as ERROR_DIR_NOT_EMPTY.
+			if entries, readErr := os.ReadDir(full); readErr != nil || len(entries) == 0 {
+				return err
+			}
+		}
+	}
 	return nil
 }
 func versionedChange(root, label string, changes snapshot, order ...[]string) (int64, error) {
@@ -248,7 +345,7 @@ func versionedChange(root, label string, changes snapshot, order ...[]string) (i
 	}
 	managed := snapshot{}
 	if previous != "" {
-		if err = json.Unmarshal([]byte(previous), &managed); err != nil {
+		if managed, err = decodeSnapshot(previous); err != nil {
 			return 0, err
 		}
 	}
@@ -258,9 +355,28 @@ func versionedChange(root, label string, changes snapshot, order ...[]string) (i
 	for name := range changes {
 		managed[name] = nil
 	}
+	addSnapshotParents(managed)
+	explicit := map[string]bool{}
+	for name := range changes {
+		explicit[name] = true
+	}
+	addSnapshotParents(changes)
+	// A file-only deletion does not request deletion of its parent directories.
+	for name, value := range changes {
+		if !explicit[name] && value == nil {
+			delete(changes, name)
+		}
+	}
+
+	for name := range changes {
+		managed[name] = nil
+	}
+	if len(managed) > maxNodes {
+		return 0, fmt.Errorf("Too many managed history paths")
+	}
 	seenNames := map[string]bool{}
 	for name := range managed {
-		fold := strings.ToLower(name)
+		fold := strings.ToLower(strings.TrimSuffix(name, "/"))
 		if seenNames[fold] {
 			return 0, fmt.Errorf("Case-conflicting managed file: %s", name)
 		}
@@ -358,7 +474,14 @@ func loadHistory(root string) (History, error) {
 		}
 		for name := range s {
 			names[name] = true
-			h.Versions[i].Files = append(h.Versions[i].Files, name)
+			if !strings.HasSuffix(name, "/") {
+				h.Versions[i].Files = append(h.Versions[i].Files, name)
+				if s[name] != nil {
+					h.Versions[i].PresentFiles++
+				} else {
+					h.Versions[i].Absent = append(h.Versions[i].Absent, name)
+				}
+			}
 		}
 		for name := range names {
 			before, after := previous[name], s[name]
@@ -394,7 +517,7 @@ func revertVersion(root string, id int64, file string) (int64, error) {
 		return 0, err
 	}
 	if file != "" {
-		if err = validManagedPath(file); err != nil {
+		if err = validManagedPath(strings.TrimSuffix(file, "/")); err != nil {
 			return 0, err
 		}
 		value, ok := desired[file]

@@ -202,6 +202,8 @@ function setup() {
     },
     window: { go: { main: { App: api } } },
     setTimeout() {},
+    setInterval: () => 1,
+    clearInterval() {},
     requestAnimationFrame: (fn) => fn(),
     TextEncoder,
     console,
@@ -267,4 +269,85 @@ test("unlimited output is persisted and used without a cap", async () => {
   };
   await get("generate").onclick();
   assert.equal(get("preview").value, "report");
+});
+
+test("report progress shows counts and cancellation stays available", async () => {
+  const { get, context, api } = setup();
+  vm.runInContext("loaded({name:'project',path:'',dir:true,children:[]})", context);
+  let finish, cancelled = false;
+  api.Generate = () => new Promise((r) => { finish = r; });
+  api.GetReportProgress = async () => ({phase:"Reading",processed:3,total:10,included:2,skipped:1,sourceBytes:42,outputBytes:100});
+  api.CancelReport = async () => { cancelled = true; };
+  const pending = get("generate").onclick();
+  await new Promise((r) => setImmediate(r));
+  await vm.runInContext("refreshReportProgress()", context);
+  assert.match(get("report-progress").textContent, /3 of 10 files/);
+  assert.equal(get("report-meter").value, 3);
+  assert.equal(get("cancel-report").hidden, false);
+  assert.equal(get("cancel-report").disabled, false);
+  await get("cancel-report").onclick();
+  assert.equal(cancelled, true);
+  finish("complete");
+  await pending;
+  assert.equal(get("cancel-report").hidden, true);
+});
+
+test("history distinguishes populated version 2 from absent baseline files", () => {
+ const {get,context} = setup();
+ context.history = {root:"X:/project",pending:false,versions:[
+  {id:2,label:"Restore update",files:["a.txt"],presentFiles:1,absent:[],changes:[{path:"a.txt",status:"Added"}]},
+  {id:1,label:"Before Restore update",files:["a.txt"],presentFiles:0,absent:["a.txt"],changes:[]}
+ ]};
+ vm.runInContext("showHistory(history)",context);
+ assert.match(get("history-version").children[0].textContent,/1 files present/);
+ get("history-version").value="1";
+ get("history-version").onchange();
+ assert.match(get("history-file").children[0].textContent,/Absent/);
+ assert.match(get("history-changes").textContent,/0 files present/);
+});
+
+test("reverting refreshes the open project and clears its stale report", async () => {
+ const {get,context,api} = setup();
+ vm.runInContext("loaded({name:'project',root:'X:/project',path:'',dir:true,children:[{name:'a.txt',path:'a.txt',dir:false}]})",context);
+ get("preview").value = "stale report";
+ get("history-version").value = "1";
+ api.RevertHistory = async () => ({root:"X:/project",pending:false,versions:[{id:4,files:[],presentFiles:0,changes:[]}]});
+ let refreshed;
+ api.LoadFolder = async root => { refreshed=root; return {name:"project",root,path:"",dir:true,children:[]}; };
+ await get("revert-version").onclick();
+ assert.equal(refreshed,"X:/project");
+ assert.equal(get("preview").value,"");
+ assert.equal(vm.runInContext("tree.children.length",context),0);
+});
+
+test("generation displays live read and generated data sizes", async () => {
+ const {get,context,api} = setup();
+ vm.runInContext("loaded({name:'project',path:'',dir:true,children:[]})",context);
+ let finish;
+ api.Generate=()=>new Promise(r=>{finish=r;});
+ api.GetReportProgress=async()=>({phase:"Reading",processed:0,total:1,included:0,skipped:0,sourceBytes:0,readBytes:1572864,outputBytes:1024});
+ const pending=get("generate").onclick();
+ await new Promise(r=>setImmediate(r));
+ await vm.runInContext("refreshReportProgress()",context);
+ assert.match(get("report-progress").textContent,/1.50 MiB read/);
+ assert.match(get("report-progress").textContent,/1.0 KiB generated/);
+ finish("report");
+ await pending;
+});
+
+test("section navigation follows workflow groups and updates context", () => {
+ const {get,context} = setup();
+ assert.equal(get("page-title").textContent,"Create a report");
+ get("tab-project").onkeydown({key:"ArrowRight",preventDefault(){}});
+ assert.equal(get("page-title").textContent,"Import a report");
+ assert.equal(get("restore-panel").hidden,false);
+ assert.equal(get("project-panel").hidden,true);
+ get("tab-restore").onkeydown({key:"ArrowRight",preventDefault(){}});
+ assert.equal(get("page-title").textContent,"Version history");
+ assert.equal(get("history-panel").hidden,false);
+ assert.equal(get("tab-history").tabIndex,0);
+ get("tab-history").onkeydown({key:"End",preventDefault(){}});
+ assert.equal(get("page-title").textContent,"Output limits");
+ get("tab-settings").onkeydown({key:"ArrowRight",preventDefault(){}});
+ assert.equal(get("page-title").textContent,"Create a report");
 });

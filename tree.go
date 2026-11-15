@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -27,6 +28,13 @@ type Node struct {
 func scan(root string) (*Node, error) { return scanSelected(root, nil, nil) }
 
 func scanSelected(root string, rules, excluded []string) (*Node, error) {
+	return scanSelectedContext(context.Background(), root, rules, excluded)
+}
+
+func scanSelectedContext(ctx context.Context, root string, rules, excluded []string) (*Node, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	n, err := readLevel(root, "", rules)
 	if err != nil {
 		return nil, err
@@ -39,6 +47,9 @@ func scanSelected(root string, rules, excluded []string) (*Node, error) {
 		}
 		children := n.Children[:0]
 		for _, c := range n.Children {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			if blockedPath(c.Path, excluded) {
 				continue
 			}
@@ -143,6 +154,29 @@ func readLevel(root, rel string, rules []string) (*Node, error) {
 
 // Recheck every component so a replaced directory cannot redirect reads through a symlink.
 func safeRead(root, rel string) ([]byte, error) {
+	return safeReadContext(context.Background(), root, rel)
+}
+
+type contextReader struct {
+	ctx context.Context
+	io.Reader
+	onRead func(int)
+}
+
+func (r contextReader) Read(p []byte) (int, error) {
+	if err := r.ctx.Err(); err != nil {
+		return 0, err
+	}
+	n, err := r.Reader.Read(p)
+	if n > 0 && r.onRead != nil {
+		r.onRead(n)
+	}
+	return n, err
+}
+func safeReadContext(ctx context.Context, root, rel string) ([]byte, error) {
+	return safeReadProgress(ctx, root, rel, nil)
+}
+func safeReadProgress(ctx context.Context, root, rel string, onRead func(int)) ([]byte, error) {
 	full, err := checkedPath(root, rel)
 	if err != nil {
 		return nil, err
@@ -159,7 +193,7 @@ func safeRead(root, rel string) ([]byte, error) {
 	if !st.Mode().IsRegular() {
 		return nil, fmt.Errorf("not a regular file")
 	}
-	data, err := io.ReadAll(f)
+	data, err := io.ReadAll(contextReader{ctx, f, onRead})
 	if err != nil {
 		return nil, err
 	}
@@ -173,12 +207,19 @@ func report(root string, tree *Node, excluded []string) (string, error) {
 	return reportLimited(root, tree, excluded, 0)
 }
 func reportLimited(root string, tree *Node, excluded []string, limit int) (string, error) {
+	return reportWithProgress(context.Background(), root, tree, excluded, limit, func(ReportProgress) {})
+}
+
+func reportWithProgress(ctx context.Context, root string, tree *Node, excluded []string, limit int, update func(ReportProgress)) (string, error) {
 	blocked := map[string]bool{}
 	for _, p := range excluded {
 		blocked[p] = true
 	}
 	var b strings.Builder
 	add := func(s string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if limit > 0 && b.Len()+len(s) > limit {
 			return fmt.Errorf("Report needs at least %.2f MiB; active report budget is %.2f MiB. Increase Settings or exclude more files", float64(b.Len()+len(s))/(1024*1024), float64(limit)/(1024*1024))
 		}
@@ -241,12 +282,23 @@ func reportLimited(root string, tree *Node, excluded []string, limit int) (strin
 		b.WriteString("\n[" + tree.Warning + "]\n")
 	}
 	b.WriteString("\n## File contents\n")
+	p := ReportProgress{Phase: "Reading", Total: len(files), OutputBytes: b.Len()}
+	update(p)
 	for _, f := range files {
-		data, err := safeRead(root, f.Path)
+		data, err := safeReadProgress(ctx, root, f.Path, func(n int) { p.ReadBytes += n; update(p) })
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
 		body := string(data)
 		if err != nil {
 			body = "[Skipped: " + err.Error() + "]"
 			manifest.Skipped = append(manifest.Skipped, f.Path)
+		}
+		if err == nil {
+			p.Included++
+			p.SourceBytes += len(data)
+		} else {
+			p.Skipped++
 		}
 		longest, run := 2, 0
 		for _, ch := range body {
@@ -263,6 +315,9 @@ func reportLimited(root string, tree *Node, excluded []string, limit int) (strin
 		if err := add("\n### " + f.Path + "\n\n" + fence + "\n" + body + "\n" + fence + "\n"); err != nil {
 			return "", err
 		}
+		p.Processed++
+		p.OutputBytes = b.Len()
+		update(p)
 	}
 	metadata, err := json.Marshal(manifest)
 	if err != nil {
@@ -272,5 +327,11 @@ func reportLimited(root string, tree *Node, excluded []string, limit int) (strin
 	if limit > 0 && len(output) > limit {
 		return "", fmt.Errorf("Report including metadata needs %.2f MiB; active report budget is %.2f MiB. Increase Settings or exclude more files", float64(len(output))/(1024*1024), float64(limit)/(1024*1024))
 	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	p.Phase = "Complete"
+	p.OutputBytes = len(output)
+	update(p)
 	return output, nil
 }

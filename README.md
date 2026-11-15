@@ -1,6 +1,6 @@
 # Molotov Tree Mapper
 
-**Current behavior (1.3.2): output is unlimited by default.** Settings accepts `0` for unlimited or a positive optional cap. Former fixed report/import/source byte ceilings are removed. Size descriptions under older version sections below are historical.
+**Current behavior (1.3.3): output is unlimited by default.** Settings accepts `0` for unlimited or a positive optional cap. Former fixed report/import/source byte ceilings are removed. Size descriptions under older version sections below are historical.
 
 A local Go desktop application that turns a folder into a readable directory tree followed by its file contents. Built with Wails and a small dependency-free HTML/CSS/JavaScript interface.
 
@@ -105,7 +105,7 @@ package updated
 
 Include complete contents for every file listed in the tree, with file sections in exactly the tree's order. Optional language tags on content fences are accepted. A response may list only added/changed files and their parent directories; unmentioned existing files remain untouched on update. Empty directories may be included. The root must match the selected existing project folder name. Omit the original molotov-v2 manifest in LLM replies so the returned tree defines the paths. Original app exports with manifests remain supported. Validation checks all paths, file bodies and order before writing. Normal restore/update applies returned files in tree order (filesystem display order remains controlled by the operating system). Deletion is only available through version reverts, not inferred from omitted files.
 
-History lives in **.molotov-history.sqlite** inside the project, automatically omitted from scans/exports and forbidden as an import target. It records full snapshots of managed UTF-8 text files. Before each update or revert, current managed file content is captured, including manual edits. The History tab can choose a project, select a version, revert one managed file, or revert managed files as a group. Reverts themselves produce new versions. Reverting to a state before a managed file existed removes that managed file after confirmation. Other files are not deleted, and empty directories are not removed. File permissions are preserved for replaced files; full filesystem metadata and binary history are not supported.
+History lives in **.molotov-history.sqlite** inside the project, automatically omitted from scans/exports and forbidden as an import target. It records full snapshots of managed UTF-8 text files. Before each update or revert, current managed file content is captured, including manual edits. The History tab can choose a project, select a version, revert one managed file, or revert managed files as a group. Reverts themselves produce new versions. Reverting to a state before a managed file existed removes that managed file after confirmation. Other files are not deleted. Managed directories are versioned and removed only when empty; preexisting directories and untracked content are preserved for newly recorded history. File permissions are preserved for replaced files; full filesystem metadata and binary history are not supported.
 
 A persisted journal blocks subsequent changes after an interrupted update. **Recover interrupted update** restores its pre-update file state. If a file has since been edited externally to something other than either journaled state, recovery stops rather than overwriting that edit; preserve the external edit separately before resolving/retrying. This is file-by-file recovery, not an atomic filesystem transaction. Do not edit the same project in another application during an update/revert, or run two Molotov instances against the same history file. Snapshot sizes are bounded; history retention is not automatically pruned.
 
@@ -125,3 +125,31 @@ The old builder check was in `tree.go` (`reportLimited`); copy/save checked the 
 **Upgrading resets the old saved byte budget to 0 once**, so an old 64 MiB setting cannot silently continue blocking generation. Later opt-in limits are preserved across restarts. Settings has a **Use unlimited output** button, applies changes automatically, and the Project page displays **Unlimited output**. Close older app windows and use the new executable after upgrading.
 
 Unlimited means no arbitrary byte ceiling, not unlimited physical resources: reports and encryption are assembled in memory, previews use a browser text editor, and SQLite history grows with snapshots. Large exports need enough RAM, disk and time. Tree browsing continues to read metadata only. Binary/non-UTF-8 sources are still skipped, not silently converted into text.
+
+## Report progress and cancellation
+
+Generation shows a scanning phase, followed by processed files out of the selected total and a progress bar. The summary distinguishes included text files from skipped files and shows source-content bytes and the complete generated report size (including metadata and optional instructions). Counts respect exclusions and type filters. Cancel report stops scanning/reading and discards partial output; an in-flight operating-system read must return before cancellation takes effect. The completed summary stays visible above the preview.
+
+## Windows history confirmation fix
+
+Update and revert confirmations use Yes/No with No selected by default. Windows Wails question dialogs return those fixed responses; earlier action-name checks silently cancelled even after Yes. Reverting to version 1 before the first import removes managed files added since then, preserves untracked content, and saves the current file state so the revert can be undone.
+
+## Folder history and restore round trips
+
+Versioned restores now record directories, including empty directories, in the same before/after snapshots and recovery journal as files. Reverting to the empty baseline removes created folders only when empty. Reverting to the populated version recreates the directory tree and exact file content. The version picker shows how many files actually exist in each snapshot; absent files are labelled Absent. The open Project tree and report preview refresh after a revert.
+
+Existing file-only histories remain readable: parent directory states are inferred from their file entries. They cannot recover the original state of preexisting empty directories or empty directories that were never recorded. Untracked content is never recursively deleted; a folder containing it remains. The local history database remains in the root.
+
+## Grouped workspace navigation
+
+The interface groups sections into Workspace (Create report), Restore & history (Import report and Version history), and Preferences (File types, Exclusion rules, and Output limits). Navigation uses text tabs with an active underline. Open folder sits with the source tree; optional prompt/encryption controls live under Report options; copy/save share an Export group. Import separates input, validation, and destination. History separates whole-version restore, optional single-file restore, and interrupted-update recovery. All existing desktop control bindings are retained.
+
+## Version 1.3.3
+
+- Live report file counts, data-read/generated sizes, and cancellation.
+- Fixed Windows Yes/No confirmation handling for versioned updates and reverts.
+- Versioned folders, empty-baseline/populated-version round trips, and folder recovery.
+- Grouped workspace navigation, restore workflows, history actions, and preferences.
+- Replaced the default Wails icon with the Molotov mark in the app, browser preview, and Windows executable.
+
+Build distributable Windows executables with `wails build` so icon, manifest, and version resources are embedded. Direct `go build` does not generate those resources. Windows may retain a cached icon for existing shortcuts until the application is restarted or the shortcut is refreshed.

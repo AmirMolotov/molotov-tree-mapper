@@ -15,6 +15,8 @@ function invalidate() {
   originalPreview = null;
   $("preview").value = "";
   $("copy").disabled = $("save").disabled = true;
+  $("report-progress").textContent = "";
+  $("report-meter").hidden = true;
   status("Selection changed. Generate a new report.");
 }
 function controls() {
@@ -87,13 +89,19 @@ async function run(fn, message = "Loading…") {
   }
 }
 function selectTab(name) {
+  const pages = {
+    project: ["Create a report", "Choose your source, select the files, then generate and export."],
+    restore: ["Import a report", "Review a saved report, then restore a new project or update an existing one."],
+    history: ["Version history", "Inspect saved states and restore a whole version or a single file."],
+    types: ["File types", "Choose which kinds of files belong in the current report."],
+    excludes: ["Exclusion rules", "Keep unnecessary files out of every project."],
+    settings: ["Output limits", "Set an optional size budget for generated reports."]
+  };
+  $("page-title").textContent = pages[name][0];
+  $("page-description").textContent = pages[name][1];
+
   for (const t of [
-    "project",
-    "excludes",
-    "restore",
-    "types",
-    "settings",
-    "history",
+    "project", "restore", "history", "types", "excludes", "settings",
   ]) {
     $("tab-" + t).setAttribute("aria-selected", String(t === name));
     $("tab-" + t).tabIndex = t === name ? 0 : -1;
@@ -101,12 +109,7 @@ function selectTab(name) {
   }
 }
 for (const name of [
-  "project",
-  "excludes",
-  "restore",
-  "types",
-  "settings",
-  "history",
+  "project", "restore", "history", "types", "excludes", "settings",
 ]) {
   $("tab-" + name).onclick = () => {
     selectTab(name);
@@ -119,12 +122,7 @@ for (const name of [
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
     e.preventDefault();
     const tabs = [
-      "project",
-      "excludes",
-      "restore",
-      "types",
-      "settings",
-      "history",
+      "project", "restore", "history", "types", "excludes", "settings",
     ];
     const next =
       e.key === "Home"
@@ -248,20 +246,63 @@ $("generate").onclick = () =>
   run(async () => {
     invalidate();
     await persistSize();
-    const text = await api().Generate(
-      [...excluded],
-      [...excludedTypes],
-      $("include-prompt").checked,
-    );
-    originalPreview = text;
-    $("preview").value = text;
-    $("copy").disabled = $("save").disabled = false;
-    $("size").textContent =
-      `${new TextEncoder().encode(text).length.toLocaleString()} bytes`;
-    status(
-      "Report ready. All included folders scanned; skipped files are labelled.",
-    );
-  }, "Generating report — scanning included folders and reading file contents…");
+    $("cancel-report").hidden = false;
+    $("cancel-report").disabled = true;
+    $("report-progress").textContent = "Scanning included folders...";
+    const timer = setInterval(() => refreshReportProgress().catch(() => {}), 200);
+    try {
+      const pending = api().Generate(
+        [...excluded],
+        [...excludedTypes],
+        $("include-prompt").checked,
+      );
+      $("cancel-report").disabled = false;
+      const text = await pending;
+      await refreshReportProgress();
+      originalPreview = text;
+      $("preview").value = text;
+      $("copy").disabled = $("save").disabled = false;
+      $("size").textContent =
+        `${new TextEncoder().encode(text).length.toLocaleString()} bytes`;
+      status(
+        "Report ready. All included folders scanned; skipped files are labelled.",
+      );
+    } catch (e) {
+      const message = String(e).includes("context canceled") ? "Report cancelled." : "Report failed.";
+      $("report-progress").textContent = message;
+      $("report-meter").hidden = true;
+      throw String(e).includes("context canceled") ? message : e;
+    } finally {
+      clearInterval(timer);
+      $("cancel-report").hidden = true;
+    }
+  }, "Generating report...");
+function formatReportSize(bytes) {
+  if (bytes < 1024) return `${bytes.toLocaleString()} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MiB`;
+}
+async function refreshReportProgress() {
+  if (!api().GetReportProgress) return;
+  const p = await api().GetReportProgress();
+  if (!busy || $("cancel-report").hidden) return;
+  $("report-progress").textContent = p.phase === "Scanning"
+    ? "Scanning included folders..."
+    : `${p.processed.toLocaleString()} of ${p.total.toLocaleString()} files | ${p.included.toLocaleString()} included | ${p.skipped.toLocaleString()} skipped | ${formatReportSize(p.readBytes ?? p.sourceBytes)} read | ${formatReportSize(p.outputBytes)} generated`;
+  $("report-meter").hidden = p.phase === "Scanning";
+  $("report-meter").max = p.total || 1;
+  $("report-meter").value = p.total ? p.processed : (p.phase === "Complete" ? 1 : 0);
+}
+$("cancel-report").onclick = async () => {
+  $("cancel-report").disabled = true;
+  try {
+    await api().CancelReport();
+    $("report-progress").textContent = "Cancelling report...";
+  } catch (e) {
+    status(String(e));
+    $("cancel-report").disabled = false;
+  }
+};
 $("copy").onclick = () =>
   run(async () => {
     await api().CopyOutput(editorText("preview", originalPreview), outputKey());
@@ -582,7 +623,7 @@ function showHistory(h) {
   for (const v of h.versions || []) {
     const o = document.createElement("option");
     o.value = String(v.id);
-    o.textContent = `#${v.id} · ${new Date(v.created).toLocaleString()} · ${v.label} · ${(v.changes || []).length} changed files`;
+    o.textContent = `#${v.id} · ${new Date(v.created).toLocaleString()} · ${v.label} · ${v.presentFiles ?? v.files?.length ?? 0} files present / ${(v.changes || []).length} changes`;
     versions.append(o);
   }
   versions.value = String(h.versions?.[0]?.id || "");
@@ -602,7 +643,7 @@ function renderHistoryFiles() {
     const o = document.createElement("option");
     o.value = file;
     const change = (v.changes || []).find((c) => c.path === file);
-    o.textContent = (change ? `[${change.status}] ` : "[Unchanged] ") + file;
+    o.textContent = (v.absent?.includes(file) ? "[Absent] " : change ? `[${change.status}] ` : "[Unchanged] ") + file;
     select.append(o);
   }
   select.value = v?.files?.[0] || "";
@@ -610,6 +651,7 @@ function renderHistoryFiles() {
   $("history-changes").textContent = changes.length
     ? changes.map((c) => `${c.status}: ${c.path}`).join("\n")
     : "No file changes in this version.";
+  $("history-changes").textContent = `${v?.presentFiles ?? v?.files?.length ?? 0} files present in this version.\n${$("history-changes").textContent}`;
 }
 $("history-version").onchange = renderHistoryFiles;
 $("include-prompt").onchange = invalidate;
@@ -667,7 +709,15 @@ async function revertSelected(single) {
   if (!id) throw new Error("Select a history version first.");
   const file = single ? $("history-file").value : "";
   if (single && !file) throw new Error("Select a managed file first.");
-  showHistory(await api().RevertHistory(id, file));
+  const h = await api().RevertHistory(id, file);
+  showHistory(h);
+  if (tree?.root && tree.root === h?.root) {
+    tree = await api().LoadFolder(tree.root);
+    collapsed.clear();
+    typeCounts = [];
+    invalidate();
+    render();
+  }
   status("History operation finished.");
 }
 $("revert-file").onclick = () =>

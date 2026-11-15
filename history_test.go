@@ -201,3 +201,145 @@ func TestAppGenerationUsesSettingsAndPrompt(t *testing.T) {
 		t.Fatal("new setting was not applied to the already-open folder", err)
 	}
 }
+
+func TestRevertToEmptyFirstVersion(t *testing.T) {
+	root := t.TempDir()
+	if _, err := versionedChange(root, "First import", snapshot{"src/deep/new.txt": str("new"), "top.txt": str("top")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := versionedChange(root, "Second import", snapshot{"later.txt": str("later")}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "untracked.txt"), []byte("keep"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := revertVersion(root, 1, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"src/deep/new.txt", "top.txt", "later.txt"} {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(name))); !os.IsNotExist(err) {
+			t.Fatalf("file %s remains after reverting to empty version: %v", name, err)
+		}
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "untracked.txt")); err != nil || string(data) != "keep" {
+		t.Fatalf("untracked file changed: %q, %v", data, err)
+	}
+	// History intentionally retains directories and its database.
+	if _, err := revertVersion(root, 4, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"src/deep/new.txt", "top.txt", "later.txt"} {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(name))); err != nil {
+			t.Fatalf("cannot undo empty revert for %s: %v", name, err)
+		}
+	}
+}
+
+func TestHistoryDirectoryRoundTrip(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "existing"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	populated, err := versionedChange(root, "Restore", snapshot{"src/deep/a.txt": str("exact\r\ncontent"), "empty/": str(""), "existing/new.txt": str("new")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = revertVersion(root, 1, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"src", "empty", "existing/new.txt"} {
+		if _, err = os.Stat(filepath.Join(root, filepath.FromSlash(name))); !os.IsNotExist(err) {
+			t.Fatalf("created path %s remains: %v", name, err)
+		}
+	}
+	if st, err := os.Stat(filepath.Join(root, "existing")); err != nil || !st.IsDir() {
+		t.Fatal("preexisting directory lost", err)
+	}
+	if _, err = revertVersion(root, populated, ""); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "src", "deep", "a.txt")); err != nil || string(data) != "exact\r\ncontent" {
+		t.Fatalf("populated version not restored: %q, %v", data, err)
+	}
+	if st, err := os.Stat(filepath.Join(root, "empty")); err != nil || !st.IsDir() {
+		t.Fatal("empty restored directory missing", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "src", "keep.txt"), []byte("untracked"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = revertVersion(root, 1, ""); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "src", "keep.txt")); err != nil || string(data) != "untracked" {
+		t.Fatal("untracked content lost", err)
+	}
+}
+
+func TestHistoryFileRevertKeepsExistingParent(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "existing"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := versionedChange(root, "Import", snapshot{"existing/a.txt": str("a")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := revertVersion(root, 1, "existing/a.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := os.Stat(filepath.Join(root, "existing")); err != nil || !st.IsDir() {
+		t.Fatal("file-only revert removed parent", err)
+	}
+}
+
+func TestHistoryDirectoryRecoveryAndLegacyRestore(t *testing.T) {
+	root := t.TempDir()
+	id, err := versionedChange(root, "Import", snapshot{"nested/a.txt": str("a"), "empty/": str("")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := openHistory(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO versions(label,snapshot) VALUES ('interrupted',?)`, `{"nested/a.txt":null,"nested/":null,"empty/":null}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Exec(`INSERT INTO pending(id,before_id,after_id) VALUES(1,?,?)`, id, id+1); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	if err = applySnapshot(root, snapshot{"nested/a.txt": nil, "nested/": nil, "empty/": nil}, snapshot{"nested/a.txt": str("a"), "nested/": str(""), "empty/": str("")}); err != nil {
+		t.Fatal(err)
+	}
+	if err = recoverHistory(root); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "nested", "a.txt")); err != nil || string(data) != "a" {
+		t.Fatal("recovery failed", err)
+	}
+	if st, err := os.Stat(filepath.Join(root, "empty")); err != nil || !st.IsDir() {
+		t.Fatal("empty directory recovery failed", err)
+	}
+	// Old databases contain only file entries. Restore their contents without migration.
+	db, err = openHistory(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(`INSERT INTO versions(id,label,snapshot) VALUES (100,'legacy populated',?), (101,'legacy empty',?)`, `{"old/deep/a.txt":"old"}`, `{"old/deep/a.txt":null}`)
+	db.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = revertVersion(root, 100, ""); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(root, "old", "deep", "a.txt")); err != nil || string(data) != "old" {
+		t.Fatal("legacy version not restored", err)
+	}
+	if _, err = revertVersion(root, 101, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = os.Stat(filepath.Join(root, "old")); !os.IsNotExist(err) {
+		t.Fatal("legacy restored directory remains", err)
+	}
+}
