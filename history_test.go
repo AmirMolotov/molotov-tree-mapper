@@ -41,6 +41,17 @@ func TestVersionUpdatesAndFileRevert(t *testing.T) {
 	if err != nil || len(h.Versions) < 6 {
 		t.Fatal(h, err)
 	}
+	for _, v := range h.Versions {
+		if v.ID == first {
+			statuses := map[string]string{}
+			for _, c := range v.Changes {
+				statuses[c.Path] = c.Status
+			}
+			if statuses["existing.txt"] != "Modified" || statuses["src/new.txt"] != "Added" {
+				t.Fatal("missing new/modified classifications", statuses)
+			}
+		}
+	}
 	db, _ := openHistory(root)
 	before, err := readSnapshot(db, 1)
 	db.Close()
@@ -126,12 +137,12 @@ func TestSettingsAndLLMFormat(t *testing.T) {
 	if err = store.SaveSettings(Settings{0}); err == nil {
 		t.Fatal("invalid size accepted")
 	}
-	text := "```json\n" + `{"format":"molotov-llm-v1","root":"project","files":[{"path":"src/main.go","content":"package main\n"}]}` + "\n```"
+	text := "# project\n\n## Directory tree\n\nproject/\n└── src/\n    └── main.go\n\n## File contents\n\n### src/main.go\n\n```go\npackage main\n```\n"
 	plan, err := parseReport(text)
-	if err != nil || plan.Contents["src/main.go"] != "package main\n" || len(plan.Dirs) != 1 {
+	if err != nil || plan.Contents["src/main.go"] != "package main" || len(plan.Dirs) != 1 {
 		t.Fatal(plan, err)
 	}
-	for _, bad := range []string{`{"format":"molotov-llm-v1","root":"project","files":[{"path":"../bad","content":"bad"}]}`, `{"format":"molotov-llm-v1","root":"project","files":[{"path":"main.go"}]}`, text + "prose"} {
+	for _, bad := range []string{strings.Replace(text, "main.go", "../bad", 1), strings.Replace(text, "package main\n```\n", "", 1), `{"format":"molotov-llm-v1"}`} {
 		if _, err = parseReport(bad); err == nil {
 			t.Fatal("invalid LLM reply accepted")
 		}
@@ -175,5 +186,18 @@ func TestAppGenerationUsesSettingsAndPrompt(t *testing.T) {
 	}
 	if err = a.checkOutputSize(strings.Repeat("a", 1024*1024+1)); err == nil {
 		t.Fatal("edited output limit ignored")
+	}
+	os.WriteFile(filepath.Join(root, "large.txt"), []byte(strings.Repeat("a", 2*1024*1024)), 0600)
+	if _, err = a.LoadFolder(root); err != nil {
+		t.Fatal("opening a large source must not read contents", err)
+	}
+	if _, err = a.Generate(nil, nil, false); err == nil {
+		t.Fatal("small report limit should fail")
+	}
+	if err = a.SaveSettings(Settings{3}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.Generate(nil, nil, false); err != nil {
+		t.Fatal("new setting was not applied to the already-open folder", err)
 	}
 }

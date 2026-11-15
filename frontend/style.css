@@ -644,3 +644,5 @@ select {
   white-space: pre-wrap;
   color: var(--muted);
 }
+
+#history-changes{white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;color:var(--text);font:13px/1.7 Consolas,monospace}

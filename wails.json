@@ -4,5 +4,5 @@
   "outputfilename": "molotov-tree-mapper",
   "frontend:dir": "frontend",
   "author": { "name": "AmirMolotov" },
-  "info": { "productName": "Molotov Tree Mapper", "productVersion": "1.3.0" }
+  "info": { "productName": "Molotov Tree Mapper", "productVersion": "1.3.1" }
 }

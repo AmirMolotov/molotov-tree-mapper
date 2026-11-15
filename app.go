@@ -294,7 +294,7 @@ func (a *App) checkOutputSize(text string) error {
 		return err
 	}
 	if len(text) > settings.MaxReportMiB*1024*1024 {
-		return fmt.Errorf("Report exceeds configured %d MiB limit", settings.MaxReportMiB)
+		return fmt.Errorf("Output is %.2f MiB; active limit is %d MiB. Increase Settings or reduce the report. Encryption adds encoding overhead", float64(len(text))/(1024*1024), settings.MaxReportMiB)
 	}
 	return nil
 }
@@ -326,7 +326,7 @@ func (a *App) UpdateRestore(text, key string) (History, error) {
 			return History{}, err
 		}
 	}
-	if _, err = versionedChange(root, "Restore update", changes); err != nil {
+	if _, err = versionedChange(root, "Restore update", changes, p.Files); err != nil {
 		return History{}, err
 	}
 	// Empty directories are created after file updates; files remain versioned if this step fails.

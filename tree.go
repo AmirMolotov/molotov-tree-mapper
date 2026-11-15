@@ -187,7 +187,7 @@ func reportLimited(root string, tree *Node, excluded []string, limit int) (strin
 	var b strings.Builder
 	add := func(s string) error {
 		if b.Len()+len(s) > limit {
-			return fmt.Errorf("Report exceeds configured size limit; exclude folders and try again")
+			return fmt.Errorf("Report needs at least %.2f MiB; active report budget is %.2f MiB. Increase Settings or exclude more files", float64(b.Len()+len(s))/(1024*1024), float64(limit)/(1024*1024))
 		}
 		b.WriteString(s)
 		return nil
@@ -277,7 +277,7 @@ func reportLimited(root string, tree *Node, excluded []string, limit int) (strin
 	}
 	output := strings.Replace(b.String(), "\n", "\n"+manifestPrefix+base64.StdEncoding.EncodeToString(metadata)+" -->\n", 1)
 	if len(output) > limit {
-		return "", fmt.Errorf("Report exceeds configured size limit including metadata")
+		return "", fmt.Errorf("Report including metadata needs %.2f MiB; active report budget is %.2f MiB. Increase Settings or exclude more files", float64(len(output))/(1024*1024), float64(limit)/(1024*1024))
 	}
 	return output, nil
 }

@@ -13,11 +13,16 @@ import (
 const historyName = ".molotov-history.sqlite"
 
 type snapshot map[string]*string
+type FileChange struct {
+	Path   string `json:"path"`
+	Status string `json:"status"`
+}
 type Version struct {
-	ID      int64    `json:"id"`
-	Label   string   `json:"label"`
-	Created string   `json:"created"`
-	Files   []string `json:"files"`
+	Changes []FileChange `json:"changes"`
+	ID      int64        `json:"id"`
+	Label   string       `json:"label"`
+	Created string       `json:"created"`
+	Files   []string     `json:"files"`
 }
 type History struct {
 	Root     string    `json:"root"`
@@ -136,12 +141,28 @@ func same(a, b *string) bool {
 	}
 	return *a == *b
 }
-func applySnapshot(root string, desired, expected snapshot) error {
+func applySnapshot(root string, desired, expected snapshot, order ...[]string) error {
 	names := make([]string, 0, len(desired))
 	for name := range desired {
 		names = append(names, name)
 	}
 	sort.Strings(names)
+	if len(order) > 0 {
+		prioritized := []string{}
+		seen := map[string]bool{}
+		for _, name := range order[0] {
+			if _, ok := desired[name]; ok && !seen[name] {
+				prioritized = append(prioritized, name)
+				seen[name] = true
+			}
+		}
+		for _, name := range names {
+			if !seen[name] {
+				prioritized = append(prioritized, name)
+			}
+		}
+		names = prioritized
+	}
 	// Preflight all paths before the first write. Recovery accepts either side of a partial operation.
 	for _, name := range names {
 		current, err := currentFile(root, name)
@@ -201,7 +222,7 @@ func applySnapshot(root string, desired, expected snapshot) error {
 	}
 	return nil
 }
-func versionedChange(root, label string, changes snapshot) (int64, error) {
+func versionedChange(root, label string, changes snapshot, order ...[]string) (int64, error) {
 	db, err := openHistory(root)
 	if err != nil {
 		return 0, err
@@ -306,7 +327,7 @@ func versionedChange(root, label string, changes snapshot) (int64, error) {
 	if err = tx.Commit(); err != nil {
 		return 0, err
 	}
-	if err = applySnapshot(root, after, before); err != nil {
+	if err = applySnapshot(root, after, before, order...); err != nil {
 		if rollbackErr := applySnapshot(root, before, after); rollbackErr != nil {
 			return 0, fmt.Errorf("Update failed (%v); recovery is required (%v)", err, rollbackErr)
 		}
@@ -349,16 +370,42 @@ func loadHistory(root string) (History, error) {
 	if err != nil {
 		return h, err
 	}
-	for i := range h.Versions {
+	previous := snapshot{}
+	for i := len(h.Versions) - 1; i >= 0; i-- {
 		s, err := readSnapshot(db, h.Versions[i].ID)
 		if err != nil {
 			return h, err
 		}
+		h.Versions[i].Changes = []FileChange{}
+		names := map[string]bool{}
+		for name := range previous {
+			names[name] = true
+		}
 		for name := range s {
+			names[name] = true
 			h.Versions[i].Files = append(h.Versions[i].Files, name)
 		}
+		for name := range names {
+			before, after := previous[name], s[name]
+			if same(before, after) {
+				continue
+			}
+			status := "Modified"
+			if before == nil {
+				status = "Added"
+				if strings.HasPrefix(h.Versions[i].Label, "Before ") {
+					status = "Existing"
+				}
+			} else if after == nil {
+				status = "Removed"
+			}
+			h.Versions[i].Changes = append(h.Versions[i].Changes, FileChange{name, status})
+		}
 		sort.Strings(h.Versions[i].Files)
+		sort.Slice(h.Versions[i].Changes, func(a, b int) bool { return h.Versions[i].Changes[a].Path < h.Versions[i].Changes[b].Path })
+		previous = s
 	}
+
 	return h, nil
 }
 func revertVersion(root string, id int64, file string) (int64, error) {

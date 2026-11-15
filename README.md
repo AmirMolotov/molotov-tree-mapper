@@ -74,23 +74,43 @@ Editing or pasting text through the browser-based editors can normalize line end
 
 On the main Project page, check **Add project-conventions prompt for an LLM** and regenerate. The appended instruction asks the model to follow the project's organization, naming and existing modules and return complete changed/added file contents. The app strips its exact instruction block when parsing a report for restore. Model compliance is not guaranteed; validate and review returned changes before applying them.
 
-Restore accepts the original report format, encrypted reports, or this LLM response (plain JSON or a single json fence, no surrounding prose):
+Restore accepts encrypted or plaintext **tree-first reports**, including LLM replies in the same format as the app's export. JSON responses are no longer requested or accepted. Ask for this structure (no outer code fence, metadata comment or surrounding prose):
 
-```json
-{
-  "format": "molotov-llm-v1",
-  "root": "my-project",
-  "directories": ["src/empty"],
-  "files": [
-    {"path": "src/main.go", "content": "package main\n"}
-  ]
-}
+````markdown
+# my-project
+
+## Directory tree
+
+my-project/
+├── src/
+│   └── new.go
+└── existing.go
+
+## File contents
+
+### src/new.go
+
+```go
+package newfile
 ```
 
-`root` must match the existing project folder name when updating. Parent directories are inferred from paths. File content is mandatory; diffs, omitted bodies and prose are not guessed into files. Only listed files are changed/added; unmentioned existing files remain untouched. Explicit file deletions from an LLM reply are not supported. **Validate report** lists actual paths without writing; **Update existing project with history** asks for the target and confirms how many files will change. A new-folder restore also records an initial version.
+### existing.go
+
+```go
+package updated
+```
+````
+
+Include complete contents for every file listed in the tree, with file sections in exactly the tree's order. Optional language tags on content fences are accepted. A response may list only added/changed files and their parent directories; unmentioned existing files remain untouched on update. Empty directories may be included. The root must match the selected existing project folder name. Omit the original molotov-v2 manifest in LLM replies so the returned tree defines the paths. Original app exports with manifests remain supported. Validation checks all paths, file bodies and order before writing. Normal restore/update applies returned files in tree order (filesystem display order remains controlled by the operating system). Deletion is only available through version reverts, not inferred from omitted files.
 
 History lives in **.molotov-history.sqlite** inside the project, automatically omitted from scans/exports and forbidden as an import target. It records full snapshots of managed UTF-8 text files. Before each update or revert, current managed file content is captured, including manual edits. The History tab can choose a project, select a version, revert one managed file, or revert managed files as a group. Reverts themselves produce new versions. Reverting to a state before a managed file existed removes that managed file after confirmation. Other files are not deleted, and empty directories are not removed. File permissions are preserved for replaced files; full filesystem metadata and binary history are not supported.
 
 A persisted journal blocks subsequent changes after an interrupted update. **Recover interrupted update** restores its pre-update file state. If a file has since been edited externally to something other than either journaled state, recovery stops rather than overwriting that edit; preserve the external edit separately before resolving/retrying. This is file-by-file recovery, not an atomic filesystem transaction. Do not edit the same project in another application during an update/revert, or run two Molotov instances against the same history file. Snapshot sizes are bounded; history retention is not automatically pruned.
 
 **History is local plaintext, even when an exported report is encrypted.** Keep the project/history on appropriate storage; the history database is not a substitute for an independent backup. Old restores performed before this feature have no retroactive history. Their first versioned update records the original content of affected files. Removing the database removes that local history. Updates to binary/non-UTF-8 files are rejected rather than discarding their original bytes.
+
+## Size setting and change visibility (1.3.1)
+
+Changing the size input applies it automatically; generation also persists the displayed value before building the report, so a separate Save click is not required. The Project page shows the active output limit. Errors distinguish the actual required output size from the active budget (including report metadata, optional instructions and encryption overhead); a large folder can still legitimately exceed a chosen limit. Folder browsing never reads source contents. Increasing the limit works without reopening the current folder.
+
+History now lists **Added**, **Modified**, **Removed**, and pre-existing baseline **Existing** paths per version. File selectors carry the same labels. Reverting a file or a managed version continues to snapshot current content first. These labels are derived from saved snapshots, so old history databases work without migration.

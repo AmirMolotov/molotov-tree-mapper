@@ -112,7 +112,8 @@
         <section class="report">
           <div class="panel-head">
             <h2>Report preview</h2>
-            <span id="size">Markdown / UTF-8</span>
+            <span id="limit-label">Limit: 32 MiB</span
+            ><span id="size">Markdown / UTF-8</span>
           </div>
           <div class="preview-wrap">
             <textarea
@@ -203,7 +204,7 @@
         ><textarea
           id="restore-input"
           spellcheck="false"
-          placeholder="Paste a Molotov report, encrypted report, or molotov-llm-v1 JSON here"
+          placeholder="Paste a tree-first Molotov report with file contents, or an encrypted report here"
         ></textarea>
         <label for="restore-key"
           >Decryption key (only for encrypted reports)</label
@@ -287,6 +288,9 @@ Validate the report to see what will be created. Skipped/binary files cannot be 
         <p id="history-root">No history project selected.</p>
         <label for="history-version">Version</label
         ><select id="history-version"></select>
+        <pre id="history-changes" role="status">
+Select a version to see added, modified, and removed files.</pre
+        >
         <label for="history-file">Managed file</label
         ><select id="history-file"></select>
         <div class="key-actions">

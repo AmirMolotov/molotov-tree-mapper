@@ -48,10 +48,6 @@ func validRelative(p string) error {
 
 func parseReport(text string) (*RestorePlan, error) {
 	text = stripLLMPrompt(text)
-	trimmed := strings.TrimSpace(text)
-	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "```json") {
-		return parseLLM(trimmed)
-	}
 
 	if len(text) > maxReport || !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
 		return nil, fmt.Errorf("Report must be UTF-8 text under 128 MiB")
@@ -106,6 +102,9 @@ func parseReport(text string) (*RestorePlan, error) {
 			return nil, fmt.Errorf("Incomplete file heading")
 		}
 		name := strings.TrimPrefix(body[:end], "### ")
+		if len(parsed) >= len(p.Files) || name != p.Files[len(parsed)] {
+			return nil, fmt.Errorf("File contents must follow tree order; expected the next listed file, got %q", name)
+		}
 		body = body[end+1:]
 		if dir, ok := kinds[name]; !ok || dir || parsed[name] {
 			return nil, fmt.Errorf("Unexpected or duplicate file %q", name)
@@ -119,11 +118,19 @@ func parseReport(text string) (*RestorePlan, error) {
 		if end < 0 {
 			return nil, fmt.Errorf("Missing file fence")
 		}
-		fence := body[:end]
-		if len(fence) < 3 || strings.Trim(fence, "`") != "" {
+		opening := body[:end]
+		fence := opening[:len(opening)-len(strings.TrimLeft(opening, "`"))]
+		info := strings.TrimPrefix(opening, fence)
+		if strings.ContainsAny(info, "` \t") {
+			return nil, fmt.Errorf("Invalid fence language tag")
+		}
+		if len(fence) < 3 {
 			return nil, fmt.Errorf("Invalid file fence")
 		}
 		body = body[end+1:]
+		if !strings.HasSuffix(body, "\n") {
+			body += "\n"
+		}
 		closeAt := strings.Index(body, "\n"+fence+"\n")
 		if closeAt < 0 {
 			return nil, fmt.Errorf("Unclosed file fence: %s", name)
@@ -226,7 +233,7 @@ func restoreFiles(parent string, p *RestorePlan) (string, error) {
 		value := body
 		changes[name] = &value
 	}
-	if _, err = versionedChange(stage, "Initial restore", changes); err != nil {
+	if _, err = versionedChange(stage, "Initial restore", changes, p.Files); err != nil {
 		return "", err
 	}
 	if _, err = os.Lstat(target); !os.IsNotExist(err) {

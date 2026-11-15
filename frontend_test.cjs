@@ -2,6 +2,24 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const vm = require("node:vm");
 const fs = require("node:fs");
+test("generation uses an edited size setting without a separate save click", async () => {
+  const { get, context, api } = setup();
+  vm.runInContext(
+    "loaded({name:'project',path:'',dir:true,children:[]})",
+    context,
+  );
+  let saved = 1;
+  api.SaveSettings = async (s) => {
+    saved = s.maxReportMiB;
+  };
+  api.Generate = async () => {
+    if (saved < 2) throw new Error("Report exceeds configured size limit");
+    return "large report";
+  };
+  get("max-report").value = "2";
+  await get("generate").onclick();
+  assert.equal(get("preview").value, "large report");
+});
 test("settings validate and persist the output size", async () => {
   const { get, api } = setup();
   let saved;
@@ -41,6 +59,7 @@ test("history file revert selects a version and one managed path", async () => {
         label: "Import",
         created: "2026-11-15T00:00:00Z",
         files: ["a.txt"],
+        changes: [{ path: "a.txt", status: "Added" }],
       },
     ],
   };
@@ -51,6 +70,8 @@ test("history file revert selects a version and one managed path", async () => {
     return h;
   };
   await get("choose-history").onclick();
+  assert.match(get("history-changes").textContent, /Added: a.txt/);
+  assert.match(get("history-file").children[0].textContent, /Added/);
   await get("revert-file").onclick();
   assert.deepEqual(args, [2, "a.txt"]);
   assert.equal(get("recover-history").disabled, true);
@@ -152,7 +173,9 @@ function setup() {
     return elements.get(id);
   };
   const calls = [];
+  get("max-report").value = "32";
   const api = {
+    SaveSettings: async () => {},
     LoadChildren: async (p) => {
       calls.push(p);
       return [

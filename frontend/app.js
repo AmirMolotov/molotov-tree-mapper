@@ -246,6 +246,7 @@ $("none").onclick = () => {
 $("generate").onclick = () =>
   run(async () => {
     invalidate();
+    await persistSize();
     const text = await api().Generate(
       [...excluded],
       [...excludedTypes],
@@ -307,6 +308,7 @@ function attachDrop() {
   run(async () => {
     $("patterns").value = (await api().GetExcludes()).join("\n");
     $("max-report").value = (await api().GetSettings()).maxReportMiB;
+    $("limit-label").textContent = `Limit: ${$("max-report").value} MiB`;
     status("Ready when you are.");
   }, "Loading saved excludes…");
   window.runtime.OnFileDrop(
@@ -579,7 +581,7 @@ function showHistory(h) {
   for (const v of h.versions || []) {
     const o = document.createElement("option");
     o.value = String(v.id);
-    o.textContent = `#${v.id} · ${new Date(v.created).toLocaleString()} · ${v.label}`;
+    o.textContent = `#${v.id} · ${new Date(v.created).toLocaleString()} · ${v.label} · ${(v.changes || []).length} changed files`;
     versions.append(o);
   }
   versions.value = String(h.versions?.[0]?.id || "");
@@ -598,21 +600,36 @@ function renderHistoryFiles() {
   for (const file of v?.files || []) {
     const o = document.createElement("option");
     o.value = file;
-    o.textContent = file;
+    const change = (v.changes || []).find((c) => c.path === file);
+    o.textContent = (change ? `[${change.status}] ` : "[Unchanged] ") + file;
     select.append(o);
   }
   select.value = v?.files?.[0] || "";
+  const changes = v?.changes || [];
+  $("history-changes").textContent = changes.length
+    ? changes.map((c) => `${c.status}: ${c.path}`).join("\n")
+    : "No file changes in this version.";
 }
 $("history-version").onchange = renderHistoryFiles;
 $("include-prompt").onchange = invalidate;
+async function persistSize() {
+  const n = Number($("max-report").value);
+  if (!Number.isInteger(n) || n < 1 || n > 128)
+    throw new Error("Choose a whole number from 1 to 128 MiB.");
+  await api().SaveSettings({ maxReportMiB: n });
+  $("limit-label").textContent = `Limit: ${n} MiB`;
+  return n;
+}
 $("save-settings").onclick = () =>
   run(async () => {
-    const n = Number($("max-report").value);
-    if (!Number.isInteger(n) || n < 1 || n > 128)
-      throw new Error("Choose a whole number from 1 to 128 MiB.");
-    await api().SaveSettings({ maxReportMiB: n });
+    const n = await persistSize();
     status(`Maximum output size saved: ${n} MiB.`);
   }, "Saving settings…");
+$("max-report").onchange = () =>
+  run(async () => {
+    const n = await persistSize();
+    status(`Maximum output size applied: ${n} MiB.`);
+  }, "Applying size limit…");
 $("choose-history").onclick = () =>
   run(async () => showHistory(await api().ChooseHistory()));
 $("refresh-history").onclick = () =>
