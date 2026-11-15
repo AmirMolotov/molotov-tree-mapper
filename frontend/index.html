@@ -63,6 +63,22 @@
         >
           File types
         </button>
+        <button
+          id="tab-settings"
+          role="tab"
+          aria-selected="false"
+          aria-controls="settings-panel"
+        >
+          Settings
+        </button>
+        <button
+          id="tab-history"
+          role="tab"
+          aria-selected="false"
+          aria-controls="history-panel"
+        >
+          History
+        </button>
       </div>
       <div
         id="project-panel"
@@ -105,6 +121,10 @@
               placeholder="Your directory tree and file contents will appear here."
             ></textarea>
           </div>
+          <label class="prompt-option"
+            ><input type="checkbox" id="include-prompt" /> Add
+            project-conventions prompt for an LLM</label
+          >
           <details class="export-options">
             <summary>Encryption options</summary>
             <label
@@ -183,7 +203,7 @@
         ><textarea
           id="restore-input"
           spellcheck="false"
-          placeholder="Paste a plain or encrypted report here"
+          placeholder="Paste a Molotov report, encrypted report, or molotov-llm-v1 JSON here"
         ></textarea>
         <label for="restore-key"
           >Decryption key (only for encrypted reports)</label
@@ -194,6 +214,9 @@
           spellcheck="false"
         />
         <div class="key-actions">
+          <button id="update-project">
+            Update existing project with history
+          </button>
           <button id="open-restore-key">Import key</button
           ><button id="decrypt-report">Decrypt for editing</button
           ><button id="inspect-report">Validate report</button
@@ -219,6 +242,62 @@ Validate the report to see what will be created. Skipped/binary files cannot be 
         </p>
         <button id="scan-types">Scan file types</button>
         <div id="type-list">Choose a folder, then scan its file types.</div>
+      </section>
+      <section
+        id="settings-panel"
+        role="tabpanel"
+        aria-labelledby="tab-settings"
+        hidden
+      >
+        <h2>Report settings</h2>
+        <label for="max-report">Maximum generated output size (MiB)</label>
+        <input
+          id="max-report"
+          type="number"
+          min="1"
+          max="128"
+          step="1"
+          value="32"
+        />
+        <p>
+          Choose 1–128 MiB. Applies to generated plaintext and final
+          copied/saved output, including encrypted output. Encryption adds about
+          one third to the size. The limit is saved on this computer.
+        </p>
+        <button id="save-settings" class="primary">Save settings</button>
+      </section>
+      <section
+        id="history-panel"
+        role="tabpanel"
+        aria-labelledby="tab-history"
+        hidden
+      >
+        <h2>Restore history</h2>
+        <p>
+          History is stored as plaintext in .molotov-history.sqlite inside the
+          project and automatically excluded from exports. Each update and
+          revert saves the current managed files first. Untracked files are left
+          alone. Empty directories are not removed by reverts.
+        </p>
+        <div class="key-actions">
+          <button id="choose-history">Choose project</button
+          ><button id="refresh-history">Refresh history</button
+          ><button id="recover-history">Recover interrupted update</button>
+        </div>
+        <p id="history-root">No history project selected.</p>
+        <label for="history-version">Version</label
+        ><select id="history-version"></select>
+        <label for="history-file">Managed file</label
+        ><select id="history-file"></select>
+        <div class="key-actions">
+          <button id="revert-file">Revert selected file</button
+          ><button id="revert-version">
+            Revert managed files to this version
+          </button>
+        </div>
+        <pre id="history-status" role="status">
+Choose a restored project to browse its versions.</pre
+        >
       </section>
       <div id="loader" hidden role="status" aria-live="polite">
         <span class="spinner"></span><span id="loading-text">Loading…</span>

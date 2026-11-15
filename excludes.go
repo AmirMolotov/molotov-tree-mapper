@@ -22,7 +22,7 @@ func openRules(file string) (*RuleStore, error) {
 	}
 	db.SetMaxOpenConns(1)
 	fail := func(err error) (*RuleStore, error) { db.Close(); return nil, err }
-	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS excludes (pattern TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY)`); err != nil {
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS excludes (pattern TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY); CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value INTEGER NOT NULL)`); err != nil {
 		return fail(err)
 	}
 	s := &RuleStore{db: db}

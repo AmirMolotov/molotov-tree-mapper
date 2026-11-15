@@ -47,8 +47,14 @@ func validRelative(p string) error {
 }
 
 func parseReport(text string) (*RestorePlan, error) {
+	text = stripLLMPrompt(text)
+	trimmed := strings.TrimSpace(text)
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "```json") {
+		return parseLLM(trimmed)
+	}
+
 	if len(text) > maxReport || !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
-		return nil, fmt.Errorf("Report must be UTF-8 text under 32 MiB")
+		return nil, fmt.Errorf("Report must be UTF-8 text under 128 MiB")
 	}
 	p := &RestorePlan{Contents: map[string]string{}}
 	treeStart := strings.Index(text, "\n## Directory tree\n\n")
@@ -74,45 +80,18 @@ func parseReport(text string) (*RestorePlan, error) {
 			return nil, err
 		}
 	}
-	if strings.Contains(p.Root, "/") {
-		return nil, fmt.Errorf("Root must be a single folder name")
-	}
-	if err := validRelative(p.Root); err != nil {
+	if err := validatePlan(p); err != nil {
 		return nil, err
 	}
-	if len(p.Dirs)+len(p.Files) > maxNodes {
-		return nil, fmt.Errorf("Too many entries")
-	}
 	kinds := map[string]bool{}
-	seen := map[string]bool{}
-	for _, group := range []struct {
-		paths []string
-		dir   bool
-	}{{p.Dirs, true}, {p.Files, false}} {
-		for _, name := range group.paths {
-			if err := validRelative(name); err != nil {
-				return nil, err
-			}
-			fold := strings.ToLower(name)
-			if seen[fold] {
-				return nil, fmt.Errorf("Duplicate or case-conflicting path %q", name)
-			}
-			seen[fold] = true
-			kinds[name] = group.dir
-		}
+	for _, name := range p.Files {
+		kinds[name] = false
 	}
-	for name := range kinds {
-		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
-			if dir, ok := kinds[parent]; !ok || !dir {
-				return nil, fmt.Errorf("Missing directory or file/directory collision: %s", parent)
-			}
-		}
+	for _, name := range p.Dirs {
+		kinds[name] = true
 	}
 	skipped := map[string]bool{}
 	for _, name := range p.Skipped {
-		if dir, ok := kinds[name]; !ok || dir || skipped[name] {
-			return nil, fmt.Errorf("Invalid skipped-file entry")
-		}
 		skipped[name] = true
 	}
 	body := text[bodyStart+len("\n## File contents\n"):]
@@ -213,6 +192,9 @@ func parseLegacyTree(text string, m *Manifest) error {
 }
 
 func restoreFiles(parent string, p *RestorePlan) (string, error) {
+	if err := validatePlan(p); err != nil {
+		return "", err
+	}
 	parent, err := filepath.Abs(parent)
 	if err != nil {
 		return "", err
@@ -239,20 +221,13 @@ func restoreFiles(parent string, p *RestorePlan) (string, error) {
 			return "", err
 		}
 	}
+	changes := snapshot{}
 	for name, body := range p.Contents {
-		file := filepath.Join(stage, filepath.FromSlash(name))
-		f, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if err != nil {
-			return "", err
-		}
-		_, writeErr := f.WriteString(body)
-		closeErr := f.Close()
-		if writeErr != nil {
-			return "", writeErr
-		}
-		if closeErr != nil {
-			return "", closeErr
-		}
+		value := body
+		changes[name] = &value
+	}
+	if _, err = versionedChange(stage, "Initial restore", changes); err != nil {
+		return "", err
 	}
 	if _, err = os.Lstat(target); !os.IsNotExist(err) {
 		return "", fmt.Errorf("Destination appeared during restore; nothing overwritten")
@@ -261,4 +236,50 @@ func restoreFiles(parent string, p *RestorePlan) (string, error) {
 		return "", err
 	}
 	return target, nil
+}
+
+func validatePlan(p *RestorePlan) error {
+	if strings.Contains(p.Root, "/") {
+		return fmt.Errorf("Root must be a single folder name")
+	}
+	if err := validRelative(p.Root); err != nil {
+		return err
+	}
+	if len(p.Dirs)+len(p.Files) > maxNodes {
+		return fmt.Errorf("Too many entries")
+	}
+	kinds := map[string]bool{}
+	seen := map[string]bool{}
+	for _, group := range []struct {
+		paths []string
+		dir   bool
+	}{{p.Dirs, true}, {p.Files, false}} {
+		for _, name := range group.paths {
+			if err := validManagedPath(name); err != nil {
+				return err
+			}
+			fold := strings.ToLower(name)
+			if seen[fold] {
+				return fmt.Errorf("Duplicate or case-conflicting path %q", name)
+			}
+			seen[fold] = true
+			kinds[name] = group.dir
+		}
+	}
+	for name := range kinds {
+		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
+			if dir, ok := kinds[parent]; !ok || !dir {
+				return fmt.Errorf("Missing directory or file/directory collision: %s", parent)
+			}
+		}
+	}
+	skipped := map[string]bool{}
+	for _, name := range p.Skipped {
+		if dir, ok := kinds[name]; !ok || dir || skipped[name] {
+			return fmt.Errorf("Invalid skipped-file entry")
+		}
+		skipped[name] = true
+	}
+
+	return nil
 }

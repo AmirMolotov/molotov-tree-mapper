@@ -13,7 +13,7 @@ import (
 )
 
 const maxFile = 2 * 1024 * 1024
-const maxReport = 32 * 1024 * 1024
+const maxReport = 128 * 1024 * 1024
 const maxNodes = 50000
 
 type Node struct {
@@ -129,7 +129,7 @@ func readLevel(root, rel string, rules []string) (*Node, error) {
 		return entries[i].Name() < entries[j].Name()
 	})
 	for _, e := range entries {
-		if matchesName(e.Name(), rules) {
+		if strings.HasPrefix(e.Name(), ".molotov-history.sqlite") || matchesName(e.Name(), rules) {
 			continue
 		}
 		c := &Node{Name: e.Name(), Path: filepath.ToSlash(filepath.Join(rel, e.Name())), Dir: e.IsDir()}
@@ -161,14 +161,14 @@ func safeRead(root, rel string) ([]byte, error) {
 		return nil, fmt.Errorf("not a regular file")
 	}
 	if st.Size() > maxReport {
-		return nil, fmt.Errorf("larger than 32 MiB")
+		return nil, fmt.Errorf("larger than 128 MiB")
 	}
 	data, err := io.ReadAll(io.LimitReader(f, maxReport+1))
 	if err != nil {
 		return nil, err
 	}
 	if len(data) > maxReport {
-		return nil, fmt.Errorf("larger than 32 MiB")
+		return nil, fmt.Errorf("larger than 128 MiB")
 	}
 	if !utf8.Valid(data) || strings.ContainsRune(string(data), 0) {
 		return nil, fmt.Errorf("binary or non-UTF-8 file")
@@ -177,14 +177,17 @@ func safeRead(root, rel string) ([]byte, error) {
 }
 
 func report(root string, tree *Node, excluded []string) (string, error) {
+	return reportLimited(root, tree, excluded, 32*1024*1024)
+}
+func reportLimited(root string, tree *Node, excluded []string, limit int) (string, error) {
 	blocked := map[string]bool{}
 	for _, p := range excluded {
 		blocked[p] = true
 	}
 	var b strings.Builder
 	add := func(s string) error {
-		if b.Len()+len(s) > maxReport {
-			return fmt.Errorf("Report exceeds 32 MiB; exclude folders and try again")
+		if b.Len()+len(s) > limit {
+			return fmt.Errorf("Report exceeds configured size limit; exclude folders and try again")
 		}
 		b.WriteString(s)
 		return nil
@@ -273,8 +276,8 @@ func report(root string, tree *Node, excluded []string) (string, error) {
 		return "", err
 	}
 	output := strings.Replace(b.String(), "\n", "\n"+manifestPrefix+base64.StdEncoding.EncodeToString(metadata)+" -->\n", 1)
-	if len(output) > maxReport {
-		return "", fmt.Errorf("Report exceeds 32 MiB including metadata")
+	if len(output) > limit {
+		return "", fmt.Errorf("Report exceeds configured size limit including metadata")
 	}
 	return output, nil
 }

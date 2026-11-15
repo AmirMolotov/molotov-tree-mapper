@@ -2,6 +2,59 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const vm = require("node:vm");
 const fs = require("node:fs");
+test("settings validate and persist the output size", async () => {
+  const { get, api } = setup();
+  let saved;
+  api.SaveSettings = async (s) => (saved = s);
+  get("max-report").value = "8";
+  await get("save-settings").onclick();
+  assert.deepEqual(JSON.parse(JSON.stringify(saved)), { maxReportMiB: 8 });
+  saved = null;
+  get("max-report").value = "0";
+  await get("save-settings").onclick();
+  assert.equal(saved, null);
+  assert.match(get("status").textContent, /1 to 128/);
+});
+test("optional project prompt flag reaches generation", async () => {
+  const { get, context, api } = setup();
+  vm.runInContext(
+    "loaded({name:'project',path:'',dir:true,children:[]})",
+    context,
+  );
+  let flag;
+  api.Generate = async (a, b, prompt) => {
+    flag = prompt;
+    return "report";
+  };
+  get("include-prompt").checked = true;
+  await get("generate").onclick();
+  assert.equal(flag, true);
+});
+test("history file revert selects a version and one managed path", async () => {
+  const { get, api } = setup();
+  const h = {
+    root: "X:/project",
+    pending: false,
+    versions: [
+      {
+        id: 2,
+        label: "Import",
+        created: "2026-11-15T00:00:00Z",
+        files: ["a.txt"],
+      },
+    ],
+  };
+  api.ChooseHistory = async () => h;
+  let args;
+  api.RevertHistory = async (...v) => {
+    args = v;
+    return h;
+  };
+  await get("choose-history").onclick();
+  await get("revert-file").onclick();
+  assert.deepEqual(args, [2, "a.txt"]);
+  assert.equal(get("recover-history").disabled, true);
+});
 test("unchanged editors retain original CRLF bytes", () => {
   const { get, context } = setup();
   get("preview").value = "a\nb\n";

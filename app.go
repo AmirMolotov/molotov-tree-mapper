@@ -13,12 +13,13 @@ import (
 )
 
 type App struct {
-	ctx      context.Context
-	mu       sync.Mutex
-	root     string
-	tree     *Node
-	store    *RuleStore
-	storeErr error
+	ctx         context.Context
+	mu          sync.Mutex
+	root        string
+	tree        *Node
+	store       *RuleStore
+	storeErr    error
+	historyRoot string
 }
 
 func (a *App) startup(ctx context.Context) {
@@ -94,7 +95,7 @@ func (a *App) LoadFolder(path string) (*Node, error) {
 	a.tree = t
 	return t, nil
 }
-func (a *App) Generate(excluded, excludedTypes []string) (string, error) {
+func (a *App) Generate(excluded, excludedTypes []string, includePrompt bool) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.tree == nil {
@@ -109,23 +110,44 @@ func (a *App) Generate(excluded, excludedTypes []string) (string, error) {
 		return "", err
 	}
 	filterTypes(tree, excludedTypes)
-	r, err := report(a.root, tree, excluded)
+	settings, err := a.store.Settings()
 	if err != nil {
 		return "", err
 	}
-	return r, nil
+	limit := settings.MaxReportMiB * 1024 * 1024
+	suffix := ""
+	if includePrompt {
+		suffix = llmPromptStart + llmInstructions + llmPromptEnd
+	}
+	r, err := reportLimited(a.root, tree, excluded, limit-len(suffix))
+	if err != nil {
+		return "", err
+	}
+	return r + suffix, nil
 }
 func (a *App) NewKey() (string, error) { return newKey() }
 func (a *App) CopyOutput(text, key string) error {
+	if err := a.checkOutputSize(text); err != nil {
+		return err
+	}
 	output, err := encodeOutput(text, key)
 	if err != nil {
+		return err
+	}
+	if err := a.checkOutputSize(output); err != nil {
 		return err
 	}
 	return runtime.ClipboardSetText(a.ctx, output)
 }
 func (a *App) SaveOutput(text, key string) (string, error) {
+	if err := a.checkOutputSize(text); err != nil {
+		return "", err
+	}
 	output, err := encodeOutput(text, key)
 	if err != nil {
+		return "", err
+	}
+	if err := a.checkOutputSize(output); err != nil {
 		return "", err
 	}
 	name := "tree-report.md"
@@ -178,7 +200,7 @@ func (a *App) OpenText() (string, error) {
 		return "", err
 	}
 	if len(data) > maxImport {
-		return "", fmt.Errorf("Input exceeds 46 MiB")
+		return "", fmt.Errorf("Input exceeds 172 MiB")
 	}
 	return string(data), nil
 }
@@ -199,7 +221,13 @@ func (a *App) RestoreReport(text, key string) (string, error) {
 	if err != nil || parent == "" {
 		return "", err
 	}
-	return restoreFiles(parent, p)
+	dest, err := restoreFiles(parent, p)
+	if err == nil {
+		a.mu.Lock()
+		a.historyRoot = dest
+		a.mu.Unlock()
+	}
+	return dest, err
 }
 
 type FileType struct {
@@ -258,4 +286,106 @@ func filterTypes(tree *Node, excluded []string) {
 		n.Children = children
 	}
 	walk(tree)
+}
+
+func (a *App) checkOutputSize(text string) error {
+	settings, err := a.GetSettings()
+	if err != nil {
+		return err
+	}
+	if len(text) > settings.MaxReportMiB*1024*1024 {
+		return fmt.Errorf("Report exceeds configured %d MiB limit", settings.MaxReportMiB)
+	}
+	return nil
+}
+func (a *App) UpdateRestore(text, key string) (History, error) {
+	p, err := a.InspectReport(text, key)
+	if err != nil {
+		return History{}, err
+	}
+	root, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "Choose existing project folder named " + p.Root})
+	if err != nil || root == "" {
+		return History{}, err
+	}
+	if filepath.Base(root) != p.Root {
+		return History{}, fmt.Errorf("Selected folder must be named %s", p.Root)
+	}
+	answer, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{Type: runtime.QuestionDialog, Title: "Apply versioned update", Message: fmt.Sprintf("Update %d files in %s? Current managed content will be saved in local history. Unmentioned files remain unchanged.", len(p.Contents), root), Buttons: []string{"Cancel", "Update"}, DefaultButton: "Cancel"})
+	if err != nil || answer != "Update" {
+		return History{}, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	changes := snapshot{}
+	for name, body := range p.Contents {
+		value := body
+		changes[name] = &value
+	}
+	for _, dir := range p.Dirs {
+		if err = ensureParents(root, dir+"/placeholder", false); err != nil {
+			return History{}, err
+		}
+	}
+	if _, err = versionedChange(root, "Restore update", changes); err != nil {
+		return History{}, err
+	}
+	// Empty directories are created after file updates; files remain versioned if this step fails.
+	for _, dir := range p.Dirs {
+		if err = ensureParents(root, dir+"/placeholder", true); err != nil {
+			return History{}, fmt.Errorf("Files updated; directory creation failed: %w", err)
+		}
+	}
+	a.historyRoot = root
+	return loadHistory(root)
+}
+func (a *App) ChooseHistory() (History, error) {
+	root, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "Choose project for version history"})
+	if err != nil || root == "" {
+		return History{}, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	h, err := loadHistory(root)
+	if err == nil {
+		a.historyRoot = root
+	}
+	return h, err
+}
+func (a *App) GetHistory() (History, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.historyRoot == "" {
+		return History{Versions: []Version{}}, nil
+	}
+	return loadHistory(a.historyRoot)
+}
+func (a *App) RevertHistory(id int64, file string) (History, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.historyRoot == "" {
+		return History{}, fmt.Errorf("Choose a history project first")
+	}
+	message := "Revert all managed files to this version? Later added managed files may be removed; untracked files and directories stay untouched. Current managed content is saved as another version."
+	if file != "" {
+		message = "Revert " + file + " to the selected version? Its current content is saved first. The file may be removed if it did not exist in that version."
+	}
+	answer, err := runtime.MessageDialog(a.ctx, runtime.MessageDialogOptions{Type: runtime.QuestionDialog, Title: "Revert version", Message: message, Buttons: []string{"Cancel", "Revert"}, DefaultButton: "Cancel"})
+	if err != nil || answer != "Revert" {
+		return loadHistory(a.historyRoot)
+	}
+	if _, err = revertVersion(a.historyRoot, id, file); err != nil {
+		return History{}, err
+	}
+	return loadHistory(a.historyRoot)
+}
+func (a *App) RecoverHistory() (History, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.historyRoot == "" {
+		return History{}, fmt.Errorf("Choose a history project first")
+	}
+	if err := recoverHistory(a.historyRoot); err != nil {
+		return History{}, err
+	}
+	return loadHistory(a.historyRoot)
 }

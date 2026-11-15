@@ -27,6 +27,17 @@ function controls() {
     "generate",
     "save-excludes",
     "patterns",
+    "include-prompt",
+    "save-settings",
+    "max-report",
+    "choose-history",
+    "refresh-history",
+    "recover-history",
+    "history-version",
+    "history-file",
+    "revert-file",
+    "revert-version",
+    "update-project",
     "scan-types",
     "new-key",
     "open-key",
@@ -55,6 +66,7 @@ function controls() {
         delete el.dataset.wasDisabled;
       }
     });
+  $("recover-history").disabled = busy || !historyData.pending;
 }
 async function run(fn, message = "Loading…") {
   if (busy) return;
@@ -74,22 +86,45 @@ async function run(fn, message = "Loading…") {
   }
 }
 function selectTab(name) {
-  for (const t of ["project", "excludes", "restore", "types"]) {
+  for (const t of [
+    "project",
+    "excludes",
+    "restore",
+    "types",
+    "settings",
+    "history",
+  ]) {
     $("tab-" + t).setAttribute("aria-selected", String(t === name));
     $("tab-" + t).tabIndex = t === name ? 0 : -1;
     $(t + "-panel").hidden = t !== name;
   }
 }
-for (const name of ["project", "excludes", "restore", "types"]) {
+for (const name of [
+  "project",
+  "excludes",
+  "restore",
+  "types",
+  "settings",
+  "history",
+]) {
   $("tab-" + name).onclick = () => {
     selectTab(name);
+    if (name === "history")
+      run(async () => showHistory(await api().GetHistory()));
     if (name === "types" && tree && !typeCounts.length)
       $("scan-types").onclick();
   };
   $("tab-" + name).onkeydown = (e) => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
     e.preventDefault();
-    const tabs = ["project", "excludes", "restore", "types"];
+    const tabs = [
+      "project",
+      "excludes",
+      "restore",
+      "types",
+      "settings",
+      "history",
+    ];
     const next =
       e.key === "Home"
         ? tabs[0]
@@ -211,7 +246,11 @@ $("none").onclick = () => {
 $("generate").onclick = () =>
   run(async () => {
     invalidate();
-    const text = await api().Generate([...excluded], [...excludedTypes]);
+    const text = await api().Generate(
+      [...excluded],
+      [...excludedTypes],
+      $("include-prompt").checked,
+    );
     originalPreview = text;
     $("preview").value = text;
     $("copy").disabled = $("save").disabled = false;
@@ -267,6 +306,7 @@ function attachDrop() {
   }
   run(async () => {
     $("patterns").value = (await api().GetExcludes()).join("\n");
+    $("max-report").value = (await api().GetSettings()).maxReportMiB;
     status("Ready when you are.");
   }, "Loading saved excludes…");
   window.runtime.OnFileDrop(
@@ -528,3 +568,84 @@ function editorText(id, original) {
     ? original
     : value;
 }
+
+let historyData = { root: "", versions: [], pending: false };
+function showHistory(h) {
+  if (!h || !h.root) return;
+  historyData = h;
+  $("history-root").textContent = h.root;
+  const versions = $("history-version");
+  versions.replaceChildren();
+  for (const v of h.versions || []) {
+    const o = document.createElement("option");
+    o.value = String(v.id);
+    o.textContent = `#${v.id} · ${new Date(v.created).toLocaleString()} · ${v.label}`;
+    versions.append(o);
+  }
+  versions.value = String(h.versions?.[0]?.id || "");
+  renderHistoryFiles();
+  $("history-status").textContent = h.pending
+    ? "An interrupted update must be recovered before more changes."
+    : `${h.versions?.length || 0} versions. Reverts save the current state before changing managed files.`;
+  $("recover-history").disabled = !h.pending;
+}
+function renderHistoryFiles() {
+  const select = $("history-file");
+  select.replaceChildren();
+  const v = (historyData.versions || []).find(
+    (v) => String(v.id) === $("history-version").value,
+  );
+  for (const file of v?.files || []) {
+    const o = document.createElement("option");
+    o.value = file;
+    o.textContent = file;
+    select.append(o);
+  }
+  select.value = v?.files?.[0] || "";
+}
+$("history-version").onchange = renderHistoryFiles;
+$("include-prompt").onchange = invalidate;
+$("save-settings").onclick = () =>
+  run(async () => {
+    const n = Number($("max-report").value);
+    if (!Number.isInteger(n) || n < 1 || n > 128)
+      throw new Error("Choose a whole number from 1 to 128 MiB.");
+    await api().SaveSettings({ maxReportMiB: n });
+    status(`Maximum output size saved: ${n} MiB.`);
+  }, "Saving settings…");
+$("choose-history").onclick = () =>
+  run(async () => showHistory(await api().ChooseHistory()));
+$("refresh-history").onclick = () =>
+  run(async () => showHistory(await api().GetHistory()));
+$("recover-history").onclick = () =>
+  run(async () => {
+    showHistory(await api().RecoverHistory());
+    status("Interrupted change recovered.");
+  }, "Recovering interrupted change…");
+$("update-project").onclick = () =>
+  run(async () => {
+    const h = await api().UpdateRestore(
+      editorText("restore-input", originalRestore),
+      $("restore-key").value,
+    );
+    if (h?.root) {
+      showHistory(h);
+      selectTab("history");
+      status("Versioned project update complete.");
+    } else status("Update cancelled.");
+  }, "Validating and applying versioned update…");
+async function revertSelected(single) {
+  const id = Number($("history-version").value);
+  if (!id) throw new Error("Select a history version first.");
+  const file = single ? $("history-file").value : "";
+  if (single && !file) throw new Error("Select a managed file first.");
+  showHistory(await api().RevertHistory(id, file));
+  status("History operation finished.");
+}
+$("revert-file").onclick = () =>
+  run(() => revertSelected(true), "Saving current state and reverting file…");
+$("revert-version").onclick = () =>
+  run(
+    () => revertSelected(false),
+    "Saving current state and reverting managed files…",
+  );

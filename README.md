@@ -67,3 +67,30 @@ Only included UTF-8 text files can be recreated. Binary/non-UTF-8, oversized or 
 
 No external cryptography library or custom cipher is used. See Go's [AES-GCM documentation](https://pkg.go.dev/crypto/cipher#NewGCM) and [cryptographic random source](https://pkg.go.dev/crypto/rand).
 Editing or pasting text through the browser-based editors can normalize line endings. Unmodified generated reports and reports loaded from files retain their original bytes for export/decryption/restoration; after edits, the editor text is authoritative.
+
+## Settings, LLM workflow, and local versions (1.3)
+
+**Settings → Maximum generated output size** accepts 1–128 MiB (default 32), persisted in the app's SQLite settings. The report, optional prompt, and final copied/saved bytes must fit. Encrypted output includes base64 overhead, so a near-limit plaintext report may need a higher setting before encrypted export. The hard import ceiling is 128 MiB plaintext / 172 MiB encoded input. Source files above the hard ceiling remain skipped. This supersedes the fixed limits described for older versions above.
+
+On the main Project page, check **Add project-conventions prompt for an LLM** and regenerate. The appended instruction asks the model to follow the project's organization, naming and existing modules and return complete changed/added file contents. The app strips its exact instruction block when parsing a report for restore. Model compliance is not guaranteed; validate and review returned changes before applying them.
+
+Restore accepts the original report format, encrypted reports, or this LLM response (plain JSON or a single json fence, no surrounding prose):
+
+```json
+{
+  "format": "molotov-llm-v1",
+  "root": "my-project",
+  "directories": ["src/empty"],
+  "files": [
+    {"path": "src/main.go", "content": "package main\n"}
+  ]
+}
+```
+
+`root` must match the existing project folder name when updating. Parent directories are inferred from paths. File content is mandatory; diffs, omitted bodies and prose are not guessed into files. Only listed files are changed/added; unmentioned existing files remain untouched. Explicit file deletions from an LLM reply are not supported. **Validate report** lists actual paths without writing; **Update existing project with history** asks for the target and confirms how many files will change. A new-folder restore also records an initial version.
+
+History lives in **.molotov-history.sqlite** inside the project, automatically omitted from scans/exports and forbidden as an import target. It records full snapshots of managed UTF-8 text files. Before each update or revert, current managed file content is captured, including manual edits. The History tab can choose a project, select a version, revert one managed file, or revert managed files as a group. Reverts themselves produce new versions. Reverting to a state before a managed file existed removes that managed file after confirmation. Other files are not deleted, and empty directories are not removed. File permissions are preserved for replaced files; full filesystem metadata and binary history are not supported.
+
+A persisted journal blocks subsequent changes after an interrupted update. **Recover interrupted update** restores its pre-update file state. If a file has since been edited externally to something other than either journaled state, recovery stops rather than overwriting that edit; preserve the external edit separately before resolving/retrying. This is file-by-file recovery, not an atomic filesystem transaction. Do not edit the same project in another application during an update/revert, or run two Molotov instances against the same history file. Snapshot sizes are bounded; history retention is not automatically pruned.
+
+**History is local plaintext, even when an exported report is encrypted.** Keep the project/history on appropriate storage; the history database is not a substitute for an independent backup. Old restores performed before this feature have no retroactive history. Their first versioned update records the original content of affected files. Removing the database removes that local history. Updates to binary/non-UTF-8 files are rejected rather than discarding their original bytes.
