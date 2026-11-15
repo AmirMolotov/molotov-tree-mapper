@@ -15,6 +15,7 @@ const maxReport = 32 * 1024 * 1024
 const maxNodes = 50000
 
 type Node struct {
+	Root     string  `json:"root,omitempty"`
 	Name     string  `json:"name"`
 	Path     string  `json:"path"`
 	Dir      bool    `json:"dir"`
@@ -22,69 +23,128 @@ type Node struct {
 	Warning  string  `json:"warning,omitempty"`
 }
 
-func scan(root string) (*Node, error) {
-	info, err := os.Lstat(root)
+func scan(root string) (*Node, error) { return scanSelected(root, nil, nil) }
+
+func scanSelected(root string, rules, excluded []string) (*Node, error) {
+	n, err := readLevel(root, "", rules)
+	if err != nil {
+		return nil, err
+	}
+	count := 0
+	var expand func(*Node, int) error
+	expand = func(n *Node, depth int) error {
+		if depth > 128 {
+			return fmt.Errorf("Folder exceeds 128 levels")
+		}
+		children := n.Children[:0]
+		for _, c := range n.Children {
+			if blockedPath(c.Path, excluded) {
+				continue
+			}
+			count++
+			if count > maxNodes {
+				return fmt.Errorf("Report exceeds 50,000 entries; add exclusion rules")
+			}
+			if c.Dir && c.Warning == "" {
+				level, err := readLevel(root, c.Path, rules)
+				if err != nil {
+					c.Warning = err.Error()
+				} else {
+					c.Children = level.Children
+				}
+				if err := expand(c, depth+1); err != nil {
+					return err
+				}
+			}
+			children = append(children, c)
+		}
+		n.Children = children
+		return nil
+	}
+	if blockedPath("", excluded) {
+		n.Children = nil
+		return n, nil
+	}
+	return n, expand(n, 0)
+}
+
+func blockedPath(rel string, excluded []string) bool {
+	for _, p := range excluded {
+		if p == "" || rel == p || strings.HasPrefix(rel, p+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func checkedPath(root, rel string) (string, error) {
+	if rel != "" && (!filepath.IsLocal(filepath.FromSlash(rel)) || strings.Contains(rel, "\\")) {
+		return "", fmt.Errorf("Invalid relative path")
+	}
+	current := root
+	parts := []string{""}
+	if rel != "" {
+		parts = append(parts, strings.Split(rel, "/")...)
+	}
+	for _, part := range parts {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("Symbolic link skipped")
+		}
+	}
+	return current, nil
+}
+
+// Only this directory's metadata is loaded; no file contents or descendants are read.
+func readLevel(root, rel string, rules []string) (*Node, error) {
+	full, err := checkedPath(root, rel)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(full)
 	if err != nil {
 		return nil, err
 	}
 	if !info.IsDir() {
-		return nil, fmt.Errorf("Drop or choose a folder")
+		return nil, fmt.Errorf("Choose a folder")
 	}
-	count := 0
-	var walk func(string, string, int) (*Node, error)
-	walk = func(full, rel string, depth int) (*Node, error) {
-		count++
-		if count > maxNodes || depth > 128 {
-			return nil, fmt.Errorf("Folder exceeds the scan limit (50,000 entries or 128 levels); choose a smaller folder")
-		}
-		st, err := os.Lstat(full)
-		if err != nil {
-			return &Node{Name: filepath.Base(full), Path: rel, Warning: err.Error()}, nil
-		}
-		n := &Node{Name: st.Name(), Path: rel, Dir: st.IsDir()}
-		if st.Mode()&os.ModeSymlink != 0 {
-			n.Warning = "Symbolic link skipped"
-			return n, nil
-		}
-		if !n.Dir {
-			return n, nil
-		}
-		entries, err := os.ReadDir(full)
-		if err != nil {
-			n.Warning = "Cannot read directory: " + err.Error()
-			return n, nil
-		}
-		sort.Slice(entries, func(i, j int) bool {
-			if entries[i].IsDir() != entries[j].IsDir() {
-				return entries[i].IsDir()
-			}
-			return entries[i].Name() < entries[j].Name()
-		})
-		for _, e := range entries {
-			child, err := walk(filepath.Join(full, e.Name()), filepath.ToSlash(filepath.Join(rel, e.Name())), depth+1)
-			if err != nil {
-				return nil, err
-			}
-			n.Children = append(n.Children, child)
-		}
-		return n, nil
+	n := &Node{Name: info.Name(), Path: rel, Dir: true, Children: []*Node{}}
+	if rel == "" {
+		n.Root = root
 	}
-	return walk(root, "", 0)
+	entries, err := os.ReadDir(full)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].IsDir() != entries[j].IsDir() {
+			return entries[i].IsDir()
+		}
+		return entries[i].Name() < entries[j].Name()
+	})
+	for _, e := range entries {
+		if matchesName(e.Name(), rules) {
+			continue
+		}
+		c := &Node{Name: e.Name(), Path: filepath.ToSlash(filepath.Join(rel, e.Name())), Dir: e.IsDir()}
+		if e.Type()&os.ModeSymlink != 0 {
+			c.Warning = "Symbolic link skipped"
+			c.Dir = false
+		}
+		n.Children = append(n.Children, c)
+	}
+	return n, nil
 }
 
 // Recheck every component so a replaced directory cannot redirect reads through a symlink.
 func safeRead(root, rel string) ([]byte, error) {
-	full := filepath.Join(root, filepath.FromSlash(rel))
-	current := root
-	for _, part := range strings.Split(filepath.FromSlash(rel), string(filepath.Separator)) {
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if err != nil {
-			return nil, err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return nil, fmt.Errorf("symbolic link skipped")
-		}
+	full, err := checkedPath(root, rel)
+	if err != nil {
+		return nil, err
 	}
 	f, err := os.Open(full)
 	if err != nil {
@@ -98,12 +158,15 @@ func safeRead(root, rel string) ([]byte, error) {
 	if !st.Mode().IsRegular() {
 		return nil, fmt.Errorf("not a regular file")
 	}
-	data, err := io.ReadAll(io.LimitReader(f, maxFile+1))
+	if st.Size() > maxReport {
+		return nil, fmt.Errorf("larger than 32 MiB")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxReport+1))
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > maxFile {
-		return nil, fmt.Errorf("larger than 2 MiB")
+	if len(data) > maxReport {
+		return nil, fmt.Errorf("larger than 32 MiB")
 	}
 	if !utf8.Valid(data) || strings.ContainsRune(string(data), 0) {
 		return nil, fmt.Errorf("binary or non-UTF-8 file")

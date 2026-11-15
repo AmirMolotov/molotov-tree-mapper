@@ -10,14 +10,63 @@ import (
 )
 
 type App struct {
-	ctx    context.Context
-	mu     sync.Mutex
-	root   string
-	tree   *Node
-	latest string
+	ctx      context.Context
+	mu       sync.Mutex
+	root     string
+	tree     *Node
+	latest   string
+	store    *RuleStore
+	storeErr error
 }
 
-func (a *App) startup(ctx context.Context) { a.ctx = ctx }
+func (a *App) startup(ctx context.Context) {
+	a.ctx = ctx
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		a.storeErr = err
+		return
+	}
+	a.store, a.storeErr = openRules(filepath.Join(dir, "Molotov Tree Mapper", "settings.db"))
+}
+func (a *App) GetExcludes() ([]string, error) { a.mu.Lock(); defer a.mu.Unlock(); return a.rules() }
+func (a *App) rules() ([]string, error) {
+	if a.storeErr != nil {
+		return nil, a.storeErr
+	}
+	if a.store == nil {
+		return nil, fmt.Errorf("Settings unavailable")
+	}
+	return a.store.List()
+}
+func (a *App) SaveExcludes(rules []string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if _, err := a.rules(); err != nil {
+		return err
+	}
+	if err := a.store.Save(rules); err != nil {
+		return err
+	}
+	a.latest = ""
+	return nil
+}
+func (a *App) LoadChildren(rel string) ([]*Node, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.root == "" {
+		return nil, fmt.Errorf("Choose a folder first")
+	}
+	rules, err := a.rules()
+	if err != nil {
+		return nil, err
+	}
+	n, err := readLevel(a.root, rel, rules)
+	if err != nil {
+		return nil, err
+	}
+	return n.Children, nil
+}
+
 func (a *App) ChooseFolder() (*Node, error) {
 	p, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "Choose a folder"})
 	if err != nil || p == "" {
@@ -32,7 +81,11 @@ func (a *App) LoadFolder(path string) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	t, err := scan(p)
+	rules, err := a.rules()
+	if err != nil {
+		return nil, err
+	}
+	t, err := readLevel(p, "", rules)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +100,15 @@ func (a *App) Generate(excluded []string) (string, error) {
 	if a.tree == nil {
 		return "", fmt.Errorf("Choose a folder first")
 	}
-	r, err := report(a.root, a.tree, excluded)
+	rules, err := a.rules()
+	if err != nil {
+		return "", err
+	}
+	tree, err := scanSelected(a.root, rules, excluded)
+	if err != nil {
+		return "", err
+	}
+	r, err := report(a.root, tree, excluded)
 	if err != nil {
 		return "", err
 	}

@@ -30,7 +30,30 @@
         </div>
         <button id="choose" class="primary">Open folder <span>↗</span></button>
       </div>
-      <div class="workspace">
+      <div class="tabs" role="tablist" aria-label="Workspace tabs">
+        <button
+          id="tab-project"
+          role="tab"
+          aria-selected="true"
+          aria-controls="project-panel"
+        >
+          Project
+        </button>
+        <button
+          id="tab-excludes"
+          role="tab"
+          aria-selected="false"
+          aria-controls="excludes-panel"
+        >
+          Excludes
+        </button>
+      </div>
+      <div
+        id="project-panel"
+        role="tabpanel"
+        aria-labelledby="tab-project"
+        class="workspace"
+      >
         <section class="explorer">
           <div class="panel-head">
             <h2>Source tree</h2>
@@ -77,6 +100,33 @@
             </div>
           </div>
         </section>
+      </div>
+      <section
+        id="excludes-panel"
+        role="tabpanel"
+        aria-labelledby="tab-excludes"
+        hidden
+      >
+        <h2>Exclude file and folder names</h2>
+        <p>
+          Rules apply to every project and persist on this computer. Matching
+          folders and their contents are never scanned.
+        </p>
+        <label for="patterns">One pattern per line</label>
+        <textarea
+          id="patterns"
+          spellcheck="false"
+          placeholder="node_modules&#10;*.log&#10;.env.*"
+        ></textarea>
+        <p>
+          Use * for any characters, ? for one character, and [abc] for a
+          character set. Match names at any depth, case-sensitive. Paths and
+          negation rules are not supported.
+        </p>
+        <button id="save-excludes" class="primary">Save excludes</button>
+      </section>
+      <div id="loader" hidden role="status" aria-live="polite">
+        <span class="spinner"></span><span id="loading-text">Loading�</span>
       </div>
       <footer>
         <span id="status" role="status" aria-live="polite"

@@ -42,7 +42,7 @@ func TestReport(t *testing.T) {
 func TestLimitsAndChangedFiles(t *testing.T) {
 	root := t.TempDir()
 	p := filepath.Join(root, "large.txt")
-	os.WriteFile(p, make([]byte, maxFile+1), 0600)
+	os.WriteFile(p, make([]byte, maxReport+1), 0600)
 	if _, err := safeRead(root, "large.txt"); err == nil {
 		t.Fatal("large file accepted")
 	}
