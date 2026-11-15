@@ -1,0 +1,5 @@
+/build/bin/
+/frontend/wailsjs/
+/.taste-skill/
+/shots/
+*.exe
