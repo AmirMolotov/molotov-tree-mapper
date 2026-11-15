@@ -47,6 +47,22 @@
         >
           Excludes
         </button>
+        <button
+          id="tab-restore"
+          role="tab"
+          aria-selected="false"
+          aria-controls="restore-panel"
+        >
+          Restore
+        </button>
+        <button
+          id="tab-types"
+          role="tab"
+          aria-selected="false"
+          aria-controls="types-panel"
+        >
+          File types
+        </button>
       </div>
       <div
         id="project-panel"
@@ -86,10 +102,35 @@
             <textarea
               id="preview"
               aria-label="Report preview"
-              readonly
               placeholder="Your directory tree and file contents will appear here."
             ></textarea>
           </div>
+          <details class="export-options">
+            <summary>Encryption options</summary>
+            <label
+              ><input type="checkbox" id="encrypt-output" /> Encrypt
+              copied/saved report</label
+            >
+            <label for="export-key"
+              >Encryption key (32-byte base64, not a password)</label
+            >
+            <input
+              id="export-key"
+              type="password"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="Generate or paste a key"
+            />
+            <div class="key-actions">
+              <button id="new-key">Generate key</button
+              ><button id="open-key">Import key</button
+              ><button id="save-key">Export key</button>
+            </div>
+            <p>
+              Keep the key separately. Without it, an encrypted report cannot be
+              recovered. You can edit the plaintext preview before exporting.
+            </p>
+          </details>
           <div class="actions">
             <button id="generate" class="primary" disabled>
               Generate report <span>→</span>
@@ -125,8 +166,62 @@
         </p>
         <button id="save-excludes" class="primary">Save excludes</button>
       </section>
+      <section
+        id="restore-panel"
+        role="tabpanel"
+        aria-labelledby="tab-restore"
+        hidden
+      >
+        <h2>Restore a project from a report</h2>
+        <p>
+          Paste a Molotov report or open a saved export. Encrypted reports
+          require the matching key. Files are created inside a new folder;
+          existing projects are never overwritten.
+        </p>
+        <button id="open-report">Open report</button>
+        <label for="restore-input">Report text</label
+        ><textarea
+          id="restore-input"
+          spellcheck="false"
+          placeholder="Paste a plain or encrypted report here"
+        ></textarea>
+        <label for="restore-key"
+          >Decryption key (only for encrypted reports)</label
+        ><input
+          type="password"
+          id="restore-key"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <div class="key-actions">
+          <button id="open-restore-key">Import key</button
+          ><button id="decrypt-report">Decrypt for editing</button
+          ><button id="inspect-report">Validate report</button
+          ><button id="restore-report" class="primary">
+            Choose destination and restore
+          </button>
+        </div>
+        <pre id="restore-summary" role="status">
+Validate the report to see what will be created. Skipped/binary files cannot be recovered.</pre
+        >
+      </section>
+      <section
+        id="types-panel"
+        role="tabpanel"
+        aria-labelledby="tab-types"
+        hidden
+      >
+        <h2>Include files by type</h2>
+        <p>
+          Toggle a category or an individual extension. This scan reads names
+          only; folder contents stay lazy in the project tree. Saved Excludes
+          rules still apply.
+        </p>
+        <button id="scan-types">Scan file types</button>
+        <div id="type-list">Choose a folder, then scan its file types.</div>
+      </section>
       <div id="loader" hidden role="status" aria-live="polite">
-        <span class="spinner"></span><span id="loading-text">Loading�</span>
+        <span class="spinner"></span><span id="loading-text">Loading…</span>
       </div>
       <footer>
         <span id="status" role="status" aria-live="polite"

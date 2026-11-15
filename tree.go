@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -188,6 +190,10 @@ func report(root string, tree *Node, excluded []string) (string, error) {
 		return nil
 	}
 	b.WriteString("# " + tree.Name + "\n\n## Directory tree\n\n" + tree.Name + "/\n")
+	manifest := Manifest{Root: tree.Name}
+	if err := validRelative(tree.Name); err != nil {
+		return "", err
+	}
 	var files []*Node
 	var walk func(*Node, string) error
 	walk = func(n *Node, prefix string) error {
@@ -198,6 +204,14 @@ func report(root string, tree *Node, excluded []string) (string, error) {
 			}
 		}
 		for i, c := range children {
+			if err := validRelative(c.Path); err != nil {
+				return err
+			}
+			if c.Dir {
+				manifest.Dirs = append(manifest.Dirs, c.Path)
+			} else {
+				manifest.Files = append(manifest.Files, c.Path)
+			}
 			branch, next := "├── ", "│   "
 			if i == len(children)-1 {
 				branch, next = "└── ", "    "
@@ -236,14 +250,31 @@ func report(root string, tree *Node, excluded []string) (string, error) {
 		body := string(data)
 		if err != nil {
 			body = "[Skipped: " + err.Error() + "]"
+			manifest.Skipped = append(manifest.Skipped, f.Path)
 		}
-		fence := "```"
-		for strings.Contains(body, fence) {
-			fence += "`"
+		longest, run := 2, 0
+		for _, ch := range body {
+			if ch == '`' {
+				run++
+				if run > longest {
+					longest = run
+				}
+			} else {
+				run = 0
+			}
 		}
+		fence := strings.Repeat("`", longest+1)
 		if err := add("\n### " + f.Path + "\n\n" + fence + "\n" + body + "\n" + fence + "\n"); err != nil {
 			return "", err
 		}
 	}
-	return b.String(), nil
+	metadata, err := json.Marshal(manifest)
+	if err != nil {
+		return "", err
+	}
+	output := strings.Replace(b.String(), "\n", "\n"+manifestPrefix+base64.StdEncoding.EncodeToString(metadata)+" -->\n", 1)
+	if len(output) > maxReport {
+		return "", fmt.Errorf("Report exceeds 32 MiB including metadata")
+	}
+	return output, nil
 }

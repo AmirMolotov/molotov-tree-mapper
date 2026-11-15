@@ -1,3 +1,7 @@
+let originalPreview = null,
+  originalRestore = null;
+let excludedTypes = new Set(),
+  typeCounts = [];
 const $ = (id) => document.getElementById(id),
   api = () => window.go?.main?.App;
 let tree = null,
@@ -8,6 +12,7 @@ function status(s) {
   $("status").textContent = s;
 }
 function invalidate() {
+  originalPreview = null;
   $("preview").value = "";
   $("copy").disabled = $("save").disabled = true;
   status("Selection changed. Generate a new report.");
@@ -22,18 +27,34 @@ function controls() {
     "generate",
     "save-excludes",
     "patterns",
+    "scan-types",
+    "new-key",
+    "open-key",
+    "save-key",
+    "export-key",
+    "encrypt-output",
+    "open-report",
+    "restore-input",
+    "restore-key",
+    "open-restore-key",
+    "decrypt-report",
+    "inspect-report",
+    "restore-report",
+    "preview",
   ])
     $(id).disabled =
       busy || (["all", "none", "generate"].includes(id) && !tree);
-  document.querySelectorAll("#tree input,#tree button").forEach((el) => {
-    if (busy) {
-      el.dataset.wasDisabled = String(el.disabled);
-      el.disabled = true;
-    } else if (el.dataset.wasDisabled) {
-      el.disabled = el.dataset.wasDisabled === "true";
-      delete el.dataset.wasDisabled;
-    }
-  });
+  document
+    .querySelectorAll("#tree input,#tree button,#type-list input")
+    .forEach((el) => {
+      if (busy) {
+        el.dataset.wasDisabled = String(el.disabled);
+        el.disabled = true;
+      } else if (el.dataset.wasDisabled) {
+        el.disabled = el.dataset.wasDisabled === "true";
+        delete el.dataset.wasDisabled;
+      }
+    });
 }
 async function run(fn, message = "Loading…") {
   if (busy) return;
@@ -53,25 +74,32 @@ async function run(fn, message = "Loading…") {
   }
 }
 function selectTab(name) {
-  for (const t of ["project", "excludes"]) {
+  for (const t of ["project", "excludes", "restore", "types"]) {
     $("tab-" + t).setAttribute("aria-selected", String(t === name));
     $("tab-" + t).tabIndex = t === name ? 0 : -1;
     $(t + "-panel").hidden = t !== name;
   }
 }
-for (const name of ["project", "excludes"]) {
-  $("tab-" + name).onclick = () => selectTab(name);
+for (const name of ["project", "excludes", "restore", "types"]) {
+  $("tab-" + name).onclick = () => {
+    selectTab(name);
+    if (name === "types" && tree && !typeCounts.length)
+      $("scan-types").onclick();
+  };
   $("tab-" + name).onkeydown = (e) => {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
     e.preventDefault();
+    const tabs = ["project", "excludes", "restore", "types"];
     const next =
       e.key === "Home"
-        ? "project"
+        ? tabs[0]
         : e.key === "End"
-          ? "excludes"
-          : name === "project"
-            ? "excludes"
-            : "project";
+          ? tabs[tabs.length - 1]
+          : tabs[
+              (tabs.indexOf(name) +
+                (e.key === "ArrowLeft" ? tabs.length - 1 : 1)) %
+                tabs.length
+            ];
     selectTab(next);
     $("tab-" + next).focus();
   };
@@ -81,7 +109,8 @@ function render() {
   host.replaceChildren();
   let count = 0;
   function row(n, depth, parentOff) {
-    const off = parentOff || excluded.has(n.path),
+    const typeOff = !n.dir && excludedTypes.has(extension(n.name));
+    const off = parentOff || excluded.has(n.path) || typeOff,
       div = document.createElement("div");
     div.className = "row" + (off ? " excluded" : "");
     div.style.paddingLeft = `${depth * 18}px`;
@@ -117,7 +146,7 @@ function render() {
       check = document.createElement("input");
     check.type = "checkbox";
     check.checked = !off;
-    check.disabled = parentOff;
+    check.disabled = parentOff || typeOff;
     check.setAttribute("aria-label", `Include ${n.name}`);
     check.indeterminate =
       n.dir &&
@@ -150,6 +179,10 @@ function render() {
 function loaded(n) {
   if (!n) return;
   tree = n;
+  excludedTypes.clear();
+  typeCounts = [];
+  $("type-list").textContent =
+    "Scan file types to list this project’s extensions.";
   excluded.clear();
   collapsed.clear();
   invalidate();
@@ -165,6 +198,8 @@ $("choose").onclick = () =>
   });
 $("all").onclick = () => {
   excluded.clear();
+  excludedTypes.clear();
+  renderTypes();
   invalidate();
   render();
 };
@@ -176,7 +211,8 @@ $("none").onclick = () => {
 $("generate").onclick = () =>
   run(async () => {
     invalidate();
-    const text = await api().Generate([...excluded]);
+    const text = await api().Generate([...excluded], [...excludedTypes]);
+    originalPreview = text;
     $("preview").value = text;
     $("copy").disabled = $("save").disabled = false;
     $("size").textContent =
@@ -187,12 +223,15 @@ $("generate").onclick = () =>
   }, "Generating report — scanning included folders and reading file contents…");
 $("copy").onclick = () =>
   run(async () => {
-    await api().CopyReport();
+    await api().CopyOutput(editorText("preview", originalPreview), outputKey());
     status("Report copied.");
   });
 $("save").onclick = () =>
   run(async () => {
-    const p = await api().SaveReport();
+    const p = await api().SaveOutput(
+      editorText("preview", originalPreview),
+      outputKey(),
+    );
     status(p ? `Saved ${p}` : "Save cancelled.");
   });
 $("save-excludes").onclick = () =>
@@ -240,4 +279,252 @@ function attachDrop() {
   );
 }
 selectTab("project");
-attachDrop();
+setTimeout(attachDrop, 0);
+
+function outputKey() {
+  if (!$("encrypt-output").checked) return "";
+  const key = $("export-key").value.trim();
+  if (!key)
+    throw new Error("Generate or provide a key before encrypted export.");
+  return key;
+}
+$("preview").oninput = () => {
+  $("copy").disabled = $("save").disabled = !$("preview").value.trim();
+};
+$("new-key").onclick = () =>
+  run(async () => {
+    $("export-key").value = await api().NewKey();
+    $("encrypt-output").checked = true;
+    status(
+      "Key generated. Export it separately before sharing the encrypted report.",
+    );
+  });
+$("open-key").onclick = () =>
+  run(async () => {
+    const text = await api().OpenText();
+    if (text) {
+      $("export-key").value = text.trim();
+      $("encrypt-output").checked = true;
+    }
+  });
+$("save-key").onclick = () =>
+  run(async () => {
+    const p = await api().SaveKey($("export-key").value);
+    status(
+      p
+        ? "Key exported. Keep it separate from the report."
+        : "Key export cancelled.",
+    );
+  });
+$("open-report").onclick = () =>
+  run(async () => {
+    const text = await api().OpenText();
+    if (text) {
+      originalRestore = text;
+      $("restore-input").value = text;
+      $("restore-summary").textContent =
+        "Report loaded. Validate before restoring.";
+    }
+  });
+$("open-restore-key").onclick = () =>
+  run(async () => {
+    const text = await api().OpenText();
+    if (text) $("restore-key").value = text.trim();
+  });
+$("decrypt-report").onclick = () =>
+  run(async () => {
+    originalRestore = await api().DecryptReport(
+      editorText("restore-input", originalRestore),
+      $("restore-key").value,
+    );
+    $("restore-input").value = originalRestore;
+    $("restore-summary").textContent =
+      "Plaintext ready for editing. Validate after changes.";
+  }, "Decrypting report…");
+$("inspect-report").onclick = () =>
+  run(async () => {
+    const p = await api().InspectReport(
+      editorText("restore-input", originalRestore),
+      $("restore-key").value,
+    );
+    $("restore-summary").textContent =
+      `Root: ${p.root}\n${(p.dirs || []).length} directories · ${(p.files || []).length - (p.skipped || []).length} files to restore · ${(p.skipped || []).length} skipped\n` +
+      (p.dirs || [])
+        .map((d) => d + "/")
+        .concat((p.files || []).filter((f) => !(p.skipped || []).includes(f)))
+        .join("\n");
+    status("Report validated. No files have been written.");
+  }, "Validating report…");
+$("restore-report").onclick = () =>
+  run(async () => {
+    const p = await api().RestoreReport(
+      editorText("restore-input", originalRestore),
+      $("restore-key").value,
+    );
+    status(p ? `Project restored to ${p}` : "Restore cancelled.");
+  }, "Validating and restoring files…");
+for (const id of ["restore-input", "restore-key"])
+  $(id).oninput = () => {
+    $("restore-summary").textContent =
+      "Input changed. Validate the report again.";
+  };
+
+function extension(name) {
+  const i = name.lastIndexOf(".");
+  return i < 0 ? "" : name.slice(i).toLowerCase();
+}
+const typeGroups = {
+  Images: [
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".svg",
+    ".bmp",
+    ".tiff",
+    ".tif",
+    ".ico",
+    ".avif",
+    ".heic",
+    ".raw",
+    ".psd",
+  ],
+  Video: [
+    ".mp4",
+    ".mkv",
+    ".mov",
+    ".avi",
+    ".webm",
+    ".wmv",
+    ".m4v",
+    ".mpeg",
+    ".mpg",
+  ],
+  Audio: [
+    ".mp3",
+    ".wav",
+    ".flac",
+    ".aac",
+    ".ogg",
+    ".m4a",
+    ".opus",
+    ".wma",
+    ".aiff",
+  ],
+  Documents: [
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
+    ".txt",
+    ".md",
+    ".rtf",
+    ".csv",
+    ".odt",
+  ],
+  Code: [
+    ".go",
+    ".js",
+    ".ts",
+    ".jsx",
+    ".tsx",
+    ".py",
+    ".java",
+    ".c",
+    ".cpp",
+    ".h",
+    ".rs",
+    ".html",
+    ".css",
+    ".scss",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".xml",
+    ".sh",
+    ".sql",
+    ".toml",
+  ],
+  Archives: [".zip", ".gz", ".tar", ".7z", ".rar", ".bz2", ".xz"],
+  Fonts: [".woff", ".woff2", ".ttf", ".otf"],
+};
+function renderTypes() {
+  const host = $("type-list");
+  host.replaceChildren();
+  if (!typeCounts.length) {
+    host.textContent = "No files found, or types have not been scanned.";
+    return;
+  }
+  const grouped = new Map();
+  for (const type of typeCounts) {
+    const group =
+      Object.keys(typeGroups).find((k) =>
+        typeGroups[k].includes(type.extension),
+      ) || "Other";
+    if (!grouped.has(group)) grouped.set(group, []);
+    grouped.get(group).push(type);
+  }
+  for (const [group, types] of grouped) {
+    const section = document.createElement("section");
+    section.className = "type-group";
+    const label = document.createElement("label"),
+      check = document.createElement("input");
+    check.type = "checkbox";
+    const selected = types.filter(
+      (t) => !excludedTypes.has(t.extension),
+    ).length;
+    check.checked = selected === types.length;
+    check.indeterminate = selected > 0 && selected < types.length;
+    const title = document.createElement("strong");
+    title.textContent =
+      group + " · " + types.reduce((n, t) => n + t.count, 0) + " files";
+    label.append(check, title);
+    check.onchange = () => {
+      for (const t of types) {
+        if (check.checked) excludedTypes.delete(t.extension);
+        else excludedTypes.add(t.extension);
+      }
+      invalidate();
+      renderTypes();
+      if (tree) render();
+    };
+    section.append(label);
+    for (const type of types) {
+      const label = document.createElement("label"),
+        box = document.createElement("input"),
+        text = document.createElement("span");
+      box.type = "checkbox";
+      box.checked = !excludedTypes.has(type.extension);
+      text.textContent =
+        (type.extension || "(no extension)") + " · " + type.count;
+      box.onchange = () => {
+        if (box.checked) excludedTypes.delete(type.extension);
+        else excludedTypes.add(type.extension);
+        invalidate();
+        renderTypes();
+        if (tree) render();
+      };
+      label.append(box, text);
+      section.append(label);
+    }
+    host.append(section);
+  }
+}
+$("scan-types").onclick = () =>
+  run(async () => {
+    if (!tree) throw new Error("Choose a folder first.");
+    typeCounts = await api().FileTypes();
+    renderTypes();
+    status("File types loaded. Unchecked types are excluded from the report.");
+  }, "Scanning file names and grouping types…");
+
+function editorText(id, original) {
+  const value = $(id).value;
+  return original !== null && value === original.replace(/\r\n?/g, "\n")
+    ? original
+    : value;
+}

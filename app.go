@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"sync"
 )
 
@@ -14,7 +17,6 @@ type App struct {
 	mu       sync.Mutex
 	root     string
 	tree     *Node
-	latest   string
 	store    *RuleStore
 	storeErr error
 }
@@ -47,7 +49,6 @@ func (a *App) SaveExcludes(rules []string) error {
 	if err := a.store.Save(rules); err != nil {
 		return err
 	}
-	a.latest = ""
 	return nil
 }
 func (a *App) LoadChildren(rel string) ([]*Node, error) {
@@ -91,10 +92,9 @@ func (a *App) LoadFolder(path string) (*Node, error) {
 	}
 	a.root = p
 	a.tree = t
-	a.latest = ""
 	return t, nil
 }
-func (a *App) Generate(excluded []string) (string, error) {
+func (a *App) Generate(excluded, excludedTypes []string) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.tree == nil {
@@ -108,39 +108,50 @@ func (a *App) Generate(excluded []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	filterTypes(tree, excludedTypes)
 	r, err := report(a.root, tree, excluded)
 	if err != nil {
 		return "", err
 	}
-	a.latest = r
 	return r, nil
 }
-func (a *App) CopyReport() error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.latest == "" {
-		return fmt.Errorf("Generate a report first")
+func (a *App) NewKey() (string, error) { return newKey() }
+func (a *App) CopyOutput(text, key string) error {
+	output, err := encodeOutput(text, key)
+	if err != nil {
+		return err
 	}
-	return runtime.ClipboardSetText(a.ctx, a.latest)
+	return runtime.ClipboardSetText(a.ctx, output)
 }
-func (a *App) SaveReport() (string, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.latest == "" {
-		return "", fmt.Errorf("Generate a report first")
+func (a *App) SaveOutput(text, key string) (string, error) {
+	output, err := encodeOutput(text, key)
+	if err != nil {
+		return "", err
 	}
-	p, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{Title: "Save report", DefaultFilename: "tree-report.md", Filters: []runtime.FileFilter{{DisplayName: "Markdown", Pattern: "*.md"}, {DisplayName: "Text", Pattern: "*.txt"}}})
+	name := "tree-report.md"
+	if key != "" {
+		name = "tree-report.molotov"
+	}
+	return a.saveText(output, name)
+}
+func (a *App) SaveKey(key string) (string, error) {
+	if _, err := keyCipher(key); err != nil {
+		return "", err
+	}
+	return a.saveText(key, "molotov.key")
+}
+func (a *App) saveText(text, name string) (string, error) {
+	p, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{Title: "Save " + name, DefaultFilename: name})
 	if err != nil || p == "" {
 		return "", err
 	}
-	// Write beside the destination, then rename, so a failed write leaves an existing report intact.
 	f, err := os.CreateTemp(filepath.Dir(p), ".molotov-*")
 	if err != nil {
 		return "", err
 	}
 	tmp := f.Name()
 	defer os.Remove(tmp)
-	if _, err = f.WriteString(a.latest); err != nil {
+	if _, err = f.WriteString(text); err != nil {
 		f.Close()
 		return "", err
 	}
@@ -151,4 +162,100 @@ func (a *App) SaveReport() (string, error) {
 		return "", err
 	}
 	return p, nil
+}
+func (a *App) OpenText() (string, error) {
+	p, err := runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{Title: "Open a report or key"})
+	if err != nil || p == "" {
+		return "", err
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxImport+1))
+	if err != nil {
+		return "", err
+	}
+	if len(data) > maxImport {
+		return "", fmt.Errorf("Input exceeds 46 MiB")
+	}
+	return string(data), nil
+}
+func (a *App) InspectReport(text, key string) (*RestorePlan, error) {
+	plain, err := decodeInput(text, key)
+	if err != nil {
+		return nil, err
+	}
+	return parseReport(plain)
+}
+func (a *App) DecryptReport(text, key string) (string, error) { return decodeInput(text, key) }
+func (a *App) RestoreReport(text, key string) (string, error) {
+	p, err := a.InspectReport(text, key)
+	if err != nil {
+		return "", err
+	}
+	parent, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "Choose parent folder for " + p.Root + " (must not already exist)"})
+	if err != nil || parent == "" {
+		return "", err
+	}
+	return restoreFiles(parent, p)
+}
+
+type FileType struct {
+	Extension string `json:"extension"`
+	Count     int    `json:"count"`
+}
+
+func (a *App) FileTypes() ([]FileType, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.root == "" {
+		return nil, fmt.Errorf("Choose a folder first")
+	}
+	rules, err := a.rules()
+	if err != nil {
+		return nil, err
+	}
+	tree, err := scanSelected(a.root, rules, nil)
+	if err != nil {
+		return nil, err
+	}
+	counts := map[string]int{}
+	var visit func(*Node)
+	visit = func(n *Node) {
+		if !n.Dir {
+			counts[strings.ToLower(filepath.Ext(n.Name))]++
+		}
+		for _, c := range n.Children {
+			visit(c)
+		}
+	}
+	visit(tree)
+	result := []FileType{}
+	for ext, count := range counts {
+		result = append(result, FileType{ext, count})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Extension < result[j].Extension })
+	return result, nil
+}
+func filterTypes(tree *Node, excluded []string) {
+	blocked := map[string]bool{}
+	for _, ext := range excluded {
+		blocked[strings.ToLower(ext)] = true
+	}
+	var walk func(*Node)
+	walk = func(n *Node) {
+		children := n.Children[:0]
+		for _, c := range n.Children {
+			if c.Dir {
+				walk(c)
+			} else if blocked[strings.ToLower(filepath.Ext(c.Name))] {
+				continue
+			}
+			children = append(children, c)
+		}
+		n.Children = children
+	}
+	walk(tree)
 }

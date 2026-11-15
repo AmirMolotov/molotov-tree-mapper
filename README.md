@@ -47,3 +47,23 @@ node --test frontend_test.cjs
 `excludes.go`: transactional SQLite settings and validated name patterns. `tree.go`: lazy listings, full report walks, exclusion and report logic, independent of the UI. `app.go`: native dialogs, clipboard and synchronized application state. `main.go`: desktop host and embedded frontend. `frontend/`: accessible selection controls, preview, local styling. Tests exercise exclusions, fences, binary files, size limits, missing files and symlinks where OS permissions allow.
 
 UI direction: a compact two-pane developer workspace, quiet neutral surfaces, a single accent, monospaced file/report content, keyboard focus and reduced-motion support. The taste skill's marketing-page hero/scroll scenes are intentionally inapplicable to this desktop workflow.
+
+
+## File type groups (1.2)
+
+After opening a folder, open **File types**. It scans filenames only and groups extensions into Images, Video, Audio, Documents, Code, Archives, Fonts, and Other. Toggle a category or an extension to include/exclude all matching files, including files in unexpanded folders. Matching is case-insensitive for extensions. These choices apply to the current project session, while the Excludes tab remains the persistent global name-rule layer. Include all clears manual and type selections but does not bypass saved name rules. Counts include files permitted by saved name rules, before individual tree-checkbox exclusions. Rescan after filesystem changes.
+
+## Editable and encrypted exports (1.2)
+
+The report preview is editable. Copy/save uses its current text, including your edits. To protect it, check **Encrypt copied/saved report**, choose **Generate key** or import/paste a valid key, then **Export key** separately. Encryption uses AES-256-GCM with a fresh random nonce for every export; keys come from Go's cryptographic random generator. Keys are 32 bytes encoded as base64, not passwords. Keys are not stored in SQLite or included in the report. Losing the key means the encrypted report cannot be recovered. Anyone holding the key can decrypt it: keep it separate from the report. The editable preview remains plaintext in application memory; encryption applies to copied/saved output, not the source files or clipboard history containing previous plaintext.
+
+## Restore (1.2)
+
+Open **Restore**, paste a report or choose **Open report**, and supply/import the matching key only if encrypted. **Decrypt for editing** puts plaintext in the input; **Validate report** previews the root, paths, counts and skipped-file count without writing anything. **Choose destination and restore** validates again, asks for a parent directory, and creates a new project folder inside it. An existing destination is refused. A failed restore cleans up its private staging directory and leaves existing projects untouched. Restored content is never automatically executed.
+
+New exports include a compact versioned manifest between the title and tree. It records root/path identities, empty directories and skipped files, without duplicating file contents. Leave that metadata and the file headings/fences intact when editing file content. Structural path changes require a matching manifest; changing only the displayed tree does not rename restore destinations. The validation preview shows the actual destinations. The earlier 1.0/1.1 tree-and-fenced-content format is supported where unambiguous. Legacy text resembling skipped-file annotations is treated as skipped; older filename/warning ambiguities may need a fresh export.
+
+Only included UTF-8 text files can be recreated. Binary/non-UTF-8, oversized or unreadable files previously marked skipped are not reconstructed; exclusions are not recovered. Timestamps, executable permissions, symlinks and other filesystem metadata are not preserved. New exports reject unsafe/nonportable names instead of producing an unrestorable report. Restore rejects traversal/absolute paths, Windows reserved names, case-conflicting duplicates, file/directory collisions, missing file bodies and malformed fences before writing. Plain reports are limited to 32 MiB; encrypted/base64 imports to 46 MiB.
+
+No external cryptography library or custom cipher is used. See Go's [AES-GCM documentation](https://pkg.go.dev/crypto/cipher#NewGCM) and [cryptographic random source](https://pkg.go.dev/crypto/rand).
+Editing or pasting text through the browser-based editors can normalize line endings. Unmodified generated reports and reports loaded from files retain their original bytes for export/decryption/restoration; after edits, the editor text is authoritative.

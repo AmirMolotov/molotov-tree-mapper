@@ -2,6 +2,77 @@ const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const vm = require("node:vm");
 const fs = require("node:fs");
+test("unchanged editors retain original CRLF bytes", () => {
+  const { get, context } = setup();
+  get("preview").value = "a\nb\n";
+  context.raw = "a\r\nb\r\n";
+  assert.equal(
+    vm.runInContext("editorText('preview',raw)", context),
+    "a\r\nb\r\n",
+  );
+  get("preview").value = "edited";
+  assert.equal(vm.runInContext("editorText('preview',raw)", context), "edited");
+});
+test("file type groups exclude every extension in a category", async () => {
+  const { get, context, api } = setup();
+  api.FileTypes = async () => [
+    { extension: ".png", count: 2 },
+    { extension: ".jpg", count: 1 },
+    { extension: ".mp3", count: 4 },
+  ];
+  vm.runInContext(
+    "loaded({name:'project',path:'',dir:true,children:[{name:'photo.png',path:'photo.png',dir:false,children:null}]})",
+    context,
+  );
+  await get("scan-types").onclick();
+  const group = get("type-list").children[0],
+    check = group.children[0].children[0];
+  check.checked = false;
+  check.onchange();
+  assert.equal(
+    vm.runInContext(
+      "excludedTypes.has('.png') && excludedTypes.has('.jpg') && !excludedTypes.has('.mp3')",
+      context,
+    ),
+    true,
+  );
+  assert.equal(get("tree").children[1].children[1].children[0].disabled, true);
+  let received;
+  api.Generate = async (paths, types) => {
+    received = Array.from(types);
+    return "report";
+  };
+  await get("generate").onclick();
+  assert.deepEqual(received, [".png", ".jpg"]);
+});
+test("export uses edited text and refuses encryption without a key", async () => {
+  const { get, api } = setup();
+  let args;
+  api.CopyOutput = async (...values) => {
+    args = values;
+  };
+  get("preview").value = "edited report";
+  get("encrypt-output").checked = true;
+  await get("copy").onclick();
+  assert.equal(args, undefined);
+  assert.match(get("status").textContent, /provide a key/);
+  get("export-key").value = "test-key";
+  await get("copy").onclick();
+  assert.deepEqual(args, ["edited report", "test-key"]);
+});
+test("restore input and key are passed together", async () => {
+  const { get, api } = setup();
+  let args;
+  api.RestoreReport = async (...values) => {
+    args = values;
+    return "X:/project";
+  };
+  get("restore-input").value = "encrypted";
+  get("restore-key").value = "key";
+  await get("restore-report").onclick();
+  assert.deepEqual(args, ["encrypted", "key"]);
+  assert.match(get("status").textContent, /restored/);
+});
 function setup() {
   const elements = new Map();
   const el = () => ({
