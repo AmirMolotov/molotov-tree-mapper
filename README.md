@@ -1,5 +1,7 @@
 # Molotov Tree Mapper
 
+**Current behavior (1.3.2): output is unlimited by default.** Settings accepts `0` for unlimited or a positive optional cap. Former fixed report/import/source byte ceilings are removed. Size descriptions under older version sections below are historical.
+
 A local Go desktop application that turns a folder into a readable directory tree followed by its file contents. Built with Wails and a small dependency-free HTML/CSS/JavaScript interface.
 
 ## Use
@@ -114,3 +116,12 @@ A persisted journal blocks subsequent changes after an interrupted update. **Rec
 Changing the size input applies it automatically; generation also persists the displayed value before building the report, so a separate Save click is not required. The Project page shows the active output limit. Errors distinguish the actual required output size from the active budget (including report metadata, optional instructions and encryption overhead); a large folder can still legitimately exceed a chosen limit. Folder browsing never reads source contents. Increasing the limit works without reopening the current folder.
 
 History now lists **Added**, **Modified**, **Removed**, and pre-existing baseline **Existing** paths per version. File selectors carry the same labels. Reverting a file or a managed version continues to snapshot current content first. These labels are derived from saved snapshots, so old history databases work without migration.
+
+
+## Unlimited output (1.3.2)
+
+The old builder check was in `tree.go` (`reportLimited`); copy/save checked the persisted budget in `app.go` (`checkOutputSize`). Previously, `crypto.go`, `restore.go`, file reading and history also imposed fixed byte ceilings. Those fixed ceilings are now removed. A positive optional budget is still enforced deliberately, but `0` disables it throughout generation and final copy/save. There is no longer an application-imposed byte limit on encryption, imports, source text reads or history snapshots. File-count/path-depth validation and parser/security checks remain.
+
+**Upgrading resets the old saved byte budget to 0 once**, so an old 64 MiB setting cannot silently continue blocking generation. Later opt-in limits are preserved across restarts. Settings has a **Use unlimited output** button, applies changes automatically, and the Project page displays **Unlimited output**. Close older app windows and use the new executable after upgrading.
+
+Unlimited means no arbitrary byte ceiling, not unlimited physical resources: reports and encryption are assembled in memory, previews use a browser text editor, and SQLite history grows with snapshots. Large exports need enough RAM, disk and time. Tree browsing continues to read metadata only. Binary/non-UTF-8 sources are still skipped, not silently converted into text.

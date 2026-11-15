@@ -112,7 +112,7 @@
         <section class="report">
           <div class="panel-head">
             <h2>Report preview</h2>
-            <span id="limit-label">Limit: 32 MiB</span
+            <span id="limit-label">Unlimited output</span
             ><span id="size">Markdown / UTF-8</span>
           </div>
           <div class="preview-wrap">
@@ -251,21 +251,18 @@ Validate the report to see what will be created. Skipped/binary files cannot be 
         hidden
       >
         <h2>Report settings</h2>
-        <label for="max-report">Maximum generated output size (MiB)</label>
-        <input
-          id="max-report"
-          type="number"
-          min="1"
-          max="128"
-          step="1"
-          value="32"
-        />
+        <label for="max-report"
+          >Optional maximum output size (MiB, 0 = unlimited)</label
+        >
+        <input id="max-report" type="number" min="0" step="1" value="0" />
         <p>
-          Choose 1–128 MiB. Applies to generated plaintext and final
-          copied/saved output, including encrypted output. Encryption adds about
-          one third to the size. The limit is saved on this computer.
+          Default: unlimited. Set 0 to disable the output-size limit, or enter a
+          positive number to opt into a cap. A chosen cap includes the complete
+          report and encrypted output overhead. Very large reports need
+          sufficient memory.
         </p>
         <button id="save-settings" class="primary">Save settings</button>
+        <button id="unlimited-output">Use unlimited output</button>
       </section>
       <section
         id="history-panel"

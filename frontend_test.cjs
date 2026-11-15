@@ -28,10 +28,10 @@ test("settings validate and persist the output size", async () => {
   await get("save-settings").onclick();
   assert.deepEqual(JSON.parse(JSON.stringify(saved)), { maxReportMiB: 8 });
   saved = null;
-  get("max-report").value = "0";
+  get("max-report").value = "-1";
   await get("save-settings").onclick();
   assert.equal(saved, null);
-  assert.match(get("status").textContent, /1 to 128/);
+  assert.match(get("status").textContent, /0 for unlimited/);
 });
 test("optional project prompt flag reaches generation", async () => {
   const { get, context, api } = setup();
@@ -249,4 +249,22 @@ test("saving rules persists the editor and refreshes current project", async () 
   assert.deepEqual(Array.from(calls[0]), ["node_modules", "*.log"]);
   assert.equal(get("patterns").value, "node_modules\n*.log");
   assert.equal(get("preview").value, "");
+});
+test("unlimited output is persisted and used without a cap", async () => {
+  const { get, context, api } = setup();
+  let saved;
+  api.SaveSettings = async (s) => (saved = s);
+  await get("unlimited-output").onclick();
+  assert.equal(saved.maxReportMiB, 0);
+  assert.match(get("limit-label").textContent, /Unlimited/);
+  vm.runInContext(
+    "loaded({name:'project',path:'',dir:true,children:[]})",
+    context,
+  );
+  api.Generate = async () => {
+    assert.equal(saved.maxReportMiB, 0);
+    return "report";
+  };
+  await get("generate").onclick();
+  assert.equal(get("preview").value, "report");
 });

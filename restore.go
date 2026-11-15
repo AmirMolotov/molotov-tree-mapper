@@ -49,8 +49,8 @@ func validRelative(p string) error {
 func parseReport(text string) (*RestorePlan, error) {
 	text = stripLLMPrompt(text)
 
-	if len(text) > maxReport || !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
-		return nil, fmt.Errorf("Report must be UTF-8 text under 128 MiB")
+	if !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
+		return nil, fmt.Errorf("Report must be UTF-8 text")
 	}
 	p := &RestorePlan{Contents: map[string]string{}}
 	treeStart := strings.Index(text, "\n## Directory tree\n\n")

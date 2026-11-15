@@ -30,6 +30,7 @@ function controls() {
     "include-prompt",
     "save-settings",
     "max-report",
+    "unlimited-output",
     "choose-history",
     "refresh-history",
     "recover-history",
@@ -308,7 +309,7 @@ function attachDrop() {
   run(async () => {
     $("patterns").value = (await api().GetExcludes()).join("\n");
     $("max-report").value = (await api().GetSettings()).maxReportMiB;
-    $("limit-label").textContent = `Limit: ${$("max-report").value} MiB`;
+    $("limit-label").textContent = sizeLabel(Number($("max-report").value));
     status("Ready when you are.");
   }, "Loading saved excludes…");
   window.runtime.OnFileDrop(
@@ -614,21 +615,31 @@ $("history-version").onchange = renderHistoryFiles;
 $("include-prompt").onchange = invalidate;
 async function persistSize() {
   const n = Number($("max-report").value);
-  if (!Number.isInteger(n) || n < 1 || n > 128)
-    throw new Error("Choose a whole number from 1 to 128 MiB.");
+  if (!Number.isSafeInteger(n) || n < 0)
+    throw new Error(
+      "Enter 0 for unlimited, or a positive whole number of MiB.",
+    );
   await api().SaveSettings({ maxReportMiB: n });
-  $("limit-label").textContent = `Limit: ${n} MiB`;
+  $("limit-label").textContent = sizeLabel(n);
   return n;
 }
 $("save-settings").onclick = () =>
   run(async () => {
     const n = await persistSize();
-    status(`Maximum output size saved: ${n} MiB.`);
+    status(
+      n === 0
+        ? "Unlimited output saved."
+        : `Maximum output size saved: ${n} MiB.`,
+    );
   }, "Saving settings…");
 $("max-report").onchange = () =>
   run(async () => {
     const n = await persistSize();
-    status(`Maximum output size applied: ${n} MiB.`);
+    status(
+      n === 0
+        ? "Unlimited output applied."
+        : `Maximum output size applied: ${n} MiB.`,
+    );
   }, "Applying size limit…");
 $("choose-history").onclick = () =>
   run(async () => showHistory(await api().ChooseHistory()));
@@ -666,3 +677,13 @@ $("revert-version").onclick = () =>
     () => revertSelected(false),
     "Saving current state and reverting managed files…",
   );
+
+function sizeLabel(n) {
+  return n === 0 ? "Unlimited output" : `Limit: ${n} MiB`;
+}
+$("unlimited-output").onclick = () =>
+  run(async () => {
+    $("max-report").value = "0";
+    await persistSize();
+    status("Output size limit disabled.");
+  }, "Disabling output limit…");

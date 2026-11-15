@@ -55,9 +55,6 @@ func readSnapshot(db *sql.DB, id int64) (snapshot, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > maxImport {
-		return nil, fmt.Errorf("History snapshot exceeds supported size")
-	}
 	var s snapshot
 	if err = json.Unmarshal([]byte(data), &s); err != nil {
 		return nil, err
@@ -250,9 +247,6 @@ func versionedChange(root, label string, changes snapshot, order ...[]string) (i
 		return 0, err
 	}
 	managed := snapshot{}
-	if len(previous) > maxImport {
-		return 0, fmt.Errorf("History snapshot exceeds supported size")
-	}
 	if previous != "" {
 		if err = json.Unmarshal([]byte(previous), &managed); err != nil {
 			return 0, err
@@ -273,7 +267,6 @@ func versionedChange(root, label string, changes snapshot, order ...[]string) (i
 		seenNames[fold] = true
 	}
 	before, after := snapshot{}, snapshot{}
-	total := 0
 	for name := range managed {
 		current, err := currentFile(root, name)
 		if err != nil {
@@ -281,24 +274,9 @@ func versionedChange(root, label string, changes snapshot, order ...[]string) (i
 		}
 		before[name] = current
 		after[name] = current
-		if current != nil {
-			total += len(*current)
-		}
 	}
 	for name, value := range changes {
 		after[name] = value
-		if value != nil {
-			total += len(*value)
-		}
-	}
-	totalAfter := 0
-	for _, value := range after {
-		if value != nil {
-			totalAfter += len(*value)
-		}
-	}
-	if totalAfter > maxReport || total > 2*maxReport {
-		return 0, fmt.Errorf("Managed history snapshot exceeds 128 MiB")
 	}
 	oldJSON, err := json.Marshal(before)
 	if err != nil {
@@ -307,9 +285,6 @@ func versionedChange(root, label string, changes snapshot, order ...[]string) (i
 	newJSON, err := json.Marshal(after)
 	if err != nil {
 		return 0, err
-	}
-	if len(oldJSON) > maxImport || len(newJSON) > maxImport {
-		return 0, fmt.Errorf("Encoded history snapshot exceeds supported size")
 	}
 	result, err := tx.Exec(`INSERT INTO versions(label,snapshot) VALUES (?,?)`, "Before "+label, string(oldJSON))
 	if err != nil {

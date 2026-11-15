@@ -119,7 +119,7 @@ func (a *App) Generate(excluded, excludedTypes []string, includePrompt bool) (st
 	if includePrompt {
 		suffix = llmPromptStart + llmInstructions + llmPromptEnd
 	}
-	r, err := reportLimited(a.root, tree, excluded, limit-len(suffix))
+	r, err := reportLimited(a.root, tree, excluded, reportBudget(limit, len(suffix)))
 	if err != nil {
 		return "", err
 	}
@@ -195,12 +195,9 @@ func (a *App) OpenText() (string, error) {
 		return "", err
 	}
 	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, maxImport+1))
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return "", err
-	}
-	if len(data) > maxImport {
-		return "", fmt.Errorf("Input exceeds 172 MiB")
 	}
 	return string(data), nil
 }
@@ -293,7 +290,7 @@ func (a *App) checkOutputSize(text string) error {
 	if err != nil {
 		return err
 	}
-	if len(text) > settings.MaxReportMiB*1024*1024 {
+	if settings.MaxReportMiB > 0 && len(text) > settings.MaxReportMiB*1024*1024 {
 		return fmt.Errorf("Output is %.2f MiB; active limit is %d MiB. Increase Settings or reduce the report. Encryption adds encoding overhead", float64(len(text))/(1024*1024), settings.MaxReportMiB)
 	}
 	return nil
@@ -388,4 +385,11 @@ func (a *App) RecoverHistory() (History, error) {
 		return History{}, err
 	}
 	return loadHistory(a.historyRoot)
+}
+
+func reportBudget(limit, suffix int) int {
+	if limit == 0 {
+		return 0
+	}
+	return limit - suffix
 }

@@ -134,7 +134,7 @@ func TestSettingsAndLLMFormat(t *testing.T) {
 	if err != nil || got.MaxReportMiB != 1 {
 		t.Fatal(got, err)
 	}
-	if err = store.SaveSettings(Settings{0}); err == nil {
+	if err = store.SaveSettings(Settings{-1}); err == nil {
 		t.Fatal("invalid size accepted")
 	}
 	text := "# project\n\n## Directory tree\n\nproject/\n└── src/\n    └── main.go\n\n## File contents\n\n### src/main.go\n\n```go\npackage main\n```\n"

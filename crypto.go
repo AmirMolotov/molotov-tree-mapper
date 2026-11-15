@@ -10,7 +10,6 @@ import (
 )
 
 const encryptedHeader = "MOLOTOV-ENCRYPTED-V1\n"
-const maxImport = 172 * 1024 * 1024
 
 func newKey() (string, error) {
 	b := make([]byte, 32)
@@ -31,9 +30,6 @@ func keyCipher(key string) (cipher.AEAD, error) {
 	return cipher.NewGCM(block)
 }
 func encodeOutput(text, key string) (string, error) {
-	if len(text) > maxReport {
-		return "", fmt.Errorf("Report exceeds 128 MiB")
-	}
 	if strings.TrimSpace(key) == "" {
 		return text, nil
 	}
@@ -49,14 +45,8 @@ func encodeOutput(text, key string) (string, error) {
 	return encryptedHeader + base64.StdEncoding.EncodeToString(sealed), nil
 }
 func decodeInput(text, key string) (string, error) {
-	if len(text) > maxImport {
-		return "", fmt.Errorf("Input exceeds 172 MiB")
-	}
 	text = strings.TrimPrefix(text, "\ufeff")
 	if !strings.HasPrefix(text, encryptedHeader) {
-		if len(text) > maxReport {
-			return "", fmt.Errorf("Plain report exceeds 128 MiB")
-		}
 		return text, nil
 	}
 	g, err := keyCipher(key)
@@ -70,9 +60,6 @@ func decodeInput(text, key string) (string, error) {
 	plain, err := g.Open(nil, data[:g.NonceSize()], data[g.NonceSize():], []byte(encryptedHeader))
 	if err != nil {
 		return "", fmt.Errorf("Cannot decrypt: wrong key or modified report")
-	}
-	if len(plain) > maxReport {
-		return "", fmt.Errorf("Report exceeds 128 MiB")
 	}
 	return string(plain), nil
 }

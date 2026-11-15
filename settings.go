@@ -14,19 +14,19 @@ func (s *RuleStore) Settings() (Settings, error) {
 	var n int
 	err := s.db.QueryRow(`SELECT value FROM app_settings WHERE key='max_report_mib'`).Scan(&n)
 	if err == sql.ErrNoRows {
-		return Settings{32}, nil
+		return Settings{0}, nil
 	}
 	if err != nil {
 		return Settings{}, err
 	}
-	if n < 1 || n > 128 {
+	if n < 0 || n > int(^uint(0)>>1)/(1024*1024) {
 		return Settings{}, fmt.Errorf("Invalid stored report size")
 	}
 	return Settings{n}, nil
 }
 func (s *RuleStore) SaveSettings(settings Settings) error {
-	if settings.MaxReportMiB < 1 || settings.MaxReportMiB > 128 {
-		return fmt.Errorf("Maximum report size must be 1–128 MiB")
+	if settings.MaxReportMiB < 0 || settings.MaxReportMiB > int(^uint(0)>>1)/(1024*1024) {
+		return fmt.Errorf("Maximum output size must be nonnegative; 0 means unlimited")
 	}
 	_, err := s.db.Exec(`INSERT INTO app_settings(key,value) VALUES ('max_report_mib',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, settings.MaxReportMiB)
 	return err

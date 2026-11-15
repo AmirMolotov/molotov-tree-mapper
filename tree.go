@@ -13,7 +13,6 @@ import (
 )
 
 const maxFile = 2 * 1024 * 1024
-const maxReport = 128 * 1024 * 1024
 const maxNodes = 50000
 
 type Node struct {
@@ -160,15 +159,9 @@ func safeRead(root, rel string) ([]byte, error) {
 	if !st.Mode().IsRegular() {
 		return nil, fmt.Errorf("not a regular file")
 	}
-	if st.Size() > maxReport {
-		return nil, fmt.Errorf("larger than 128 MiB")
-	}
-	data, err := io.ReadAll(io.LimitReader(f, maxReport+1))
+	data, err := io.ReadAll(f)
 	if err != nil {
 		return nil, err
-	}
-	if len(data) > maxReport {
-		return nil, fmt.Errorf("larger than 128 MiB")
 	}
 	if !utf8.Valid(data) || strings.ContainsRune(string(data), 0) {
 		return nil, fmt.Errorf("binary or non-UTF-8 file")
@@ -177,7 +170,7 @@ func safeRead(root, rel string) ([]byte, error) {
 }
 
 func report(root string, tree *Node, excluded []string) (string, error) {
-	return reportLimited(root, tree, excluded, 32*1024*1024)
+	return reportLimited(root, tree, excluded, 0)
 }
 func reportLimited(root string, tree *Node, excluded []string, limit int) (string, error) {
 	blocked := map[string]bool{}
@@ -186,7 +179,7 @@ func reportLimited(root string, tree *Node, excluded []string, limit int) (strin
 	}
 	var b strings.Builder
 	add := func(s string) error {
-		if b.Len()+len(s) > limit {
+		if limit > 0 && b.Len()+len(s) > limit {
 			return fmt.Errorf("Report needs at least %.2f MiB; active report budget is %.2f MiB. Increase Settings or exclude more files", float64(b.Len()+len(s))/(1024*1024), float64(limit)/(1024*1024))
 		}
 		b.WriteString(s)
@@ -276,7 +269,7 @@ func reportLimited(root string, tree *Node, excluded []string, limit int) (strin
 		return "", err
 	}
 	output := strings.Replace(b.String(), "\n", "\n"+manifestPrefix+base64.StdEncoding.EncodeToString(metadata)+" -->\n", 1)
-	if len(output) > limit {
+	if limit > 0 && len(output) > limit {
 		return "", fmt.Errorf("Report including metadata needs %.2f MiB; active report budget is %.2f MiB. Increase Settings or exclude more files", float64(len(output))/(1024*1024), float64(limit)/(1024*1024))
 	}
 	return output, nil

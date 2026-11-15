@@ -35,6 +35,29 @@ func openRules(file string) (*RuleStore, error) {
 			return fail(err)
 		}
 	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fail(err)
+	}
+	result, err := tx.Exec(`INSERT OR IGNORE INTO app_settings(key,value) VALUES ('unlimited_default_v1',1)`)
+	if err != nil {
+		tx.Rollback()
+		return fail(err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		tx.Rollback()
+		return fail(err)
+	}
+	if count > 0 {
+		if _, err = tx.Exec(`INSERT INTO app_settings(key,value) VALUES ('max_report_mib',0) ON CONFLICT(key) DO UPDATE SET value=0`); err != nil {
+			tx.Rollback()
+			return fail(err)
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return fail(err)
+	}
 	return s, nil
 }
 func (s *RuleStore) List() ([]string, error) {
